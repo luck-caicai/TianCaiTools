@@ -11,7 +11,7 @@
     <Company>TianCai</Company>
     <Description>TianCai图片直粘：截图和复制图片后直接粘贴到文件夹。</Description>
     <Product>TianCai图片直粘</Product>
-    <Version>1.3.1</Version>
+    <Version>1.3.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>

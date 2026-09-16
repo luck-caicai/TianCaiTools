@@ -15,6 +15,15 @@ internal static class SelfTests
             try { action(); results.Add(new { name, passed = true }); }
             catch (Exception ex) { failed++; results.Add(new { name, passed = false, error = ex.ToString() }); }
         }
+        Test("Tencent desktop accepts host paste but excludes edits, menus, panels and other apps", () =>
+        {
+            Assert(PasteTarget.IsTencentDesktopTarget("DesktopMgr64", true, 0, true), "Observed DeskGo desktop rejected");
+            Assert(PasteTarget.IsTencentDesktopTarget("DesktopMgr", true, 1, true), "32-bit host rejected");
+            Assert(!PasteTarget.IsTencentDesktopTarget("QQ", true, 0, true), "Other Tencent app intercepted");
+            Assert(!PasteTarget.IsTencentDesktopTarget("DesktopMgr64", false, 0, true), "Child editor intercepted");
+            Assert(!PasteTarget.IsTencentDesktopTarget("DesktopMgr64", true, 4, true), "Menu intercepted");
+            Assert(!PasteTarget.IsTencentDesktopTarget("DesktopMgr64", true, 0, false), "Small panel intercepted");
+        });
         Test("Desktop host and missing focus allow fallback, edits and foreign focus do not", () =>
         {
             Assert(PasteTarget.AllowsDesktopFallback(0, 10, 20, ""), "Missing desktop focus rejected");

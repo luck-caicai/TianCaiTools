@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace ImagePaste;
@@ -11,6 +12,7 @@ internal static class PasteTarget
     {
         nint window = Native.GetForegroundWindow();
         string type = Native.ClassName(window);
+        if (type == "TXMiniSkin") return CaptureTencentDesktop(window);
         bool desktop = type is "Progman" or "WorkerW";
         if (!desktop && type is not ("CabinetWClass" or "ExploreWClass")) return null;
         uint thread = Native.GetWindowThreadProcessId(window, out uint process);
@@ -43,6 +45,30 @@ internal static class PasteTarget
     }
 
     internal static bool AllowsShortcut(uint flags) => (flags & 0x1e) == 0; // Moving/sizing and menus; blinking caret alone is harmless.
+
+    private static PasteRequest? CaptureTencentDesktop(nint window)
+    {
+        uint thread = Native.GetWindowThreadProcessId(window, out uint processId);
+        var info = new Native.GuiThreadInfo { Size = (uint)Marshal.SizeOf<Native.GuiThreadInfo>() };
+        if (!Native.GetGUIThreadInfo(thread, ref info) || !Native.GetWindowRect(window, out var rect)) return null;
+        var work = Screen.FromHandle(window).WorkingArea;
+        bool coversDesktop = rect.Left <= work.Left && rect.Top <= work.Top && rect.Right >= work.Right && rect.Bottom >= work.Bottom;
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            if (!IsTencentDesktopTarget(process.ProcessName, info.Focus == window, info.Flags, coversDesktop)) return null;
+            return new(window, info.Focus, window, true, Native.GetClipboardSequenceNumber());
+        }
+        catch (ArgumentException) { return null; }
+        catch (Win32Exception) { return null; }
+    }
+
+    // DeskGo owns a separate full-desktop window. Its rename/search child controls
+    // and smaller organizer panels must retain their own paste behavior.
+    internal static bool IsTencentDesktopTarget(string processName, bool hostFocused, uint flags, bool coversDesktop) =>
+        (processName.Equals("DesktopMgr64", StringComparison.OrdinalIgnoreCase)
+            || processName.Equals("DesktopMgr", StringComparison.OrdinalIgnoreCase))
+        && hostFocused && AllowsShortcut(flags) && coversDesktop;
 
     internal static bool AllowsDesktopFallback(nint focus, nint window, nint viewHost, string focusClass) =>
         focus == 0 || ((focus == window || focus == viewHost) && focusClass is "Progman" or "WorkerW");
