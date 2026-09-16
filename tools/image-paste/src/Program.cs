@@ -9,6 +9,17 @@ internal static class Program
     private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Length == 2 && args[0] == "--update-probe")
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                var release = UpdateChecker.CheckAsync(timeout.Token).GetAwaiter().GetResult();
+                File.WriteAllText(args[1], System.Text.Json.JsonSerializer.Serialize(new { current = UpdateChecker.CurrentVersion.ToString(), latest = release?.Version.ToString(), url = release?.PageUrl }));
+            }
+            catch (Exception ex) { File.WriteAllText(args[1], ex.ToString()); Environment.ExitCode = 1; }
+            return;
+        }
         if (args.Length == 4 && args[0] == "--cursor-guard")
         {
             Environment.ExitCode = BusyCursor.RunGuard(int.Parse(args[1]), long.Parse(args[2]), args[3]);
@@ -84,6 +95,8 @@ internal sealed class TrayApp : ApplicationContext
     private readonly NotifyIcon tray;
     private readonly PasteHook hook;
     private readonly BusyCursor cursor;
+    private readonly CancellationTokenSource updateCancellation = new();
+    private readonly ToolStripMenuItem checkUpdate = new("检查更新");
     private bool busy, exiting;
     private string? lastImage;
 
@@ -98,12 +111,14 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(startup);
         menu.Items.Add("打开最近保存的位置", null, (_, _) => OpenLast());
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(checkUpdate);
+        checkUpdate.Click += async (_, _) => await CheckUpdateAsync();
         menu.Items.Add("使用说明", null, (_, _) => MessageBox.Show(
             "截图或复制图片后，在桌面或资源管理器文件列表中按 Ctrl + V，即可保存为 PNG。\n\n" +
             "其他软件、地址栏、搜索框和重命名中的粘贴保持原样。\n复制的内容已是文件时，由 Windows 正常粘贴。\n\n" +
             "仅支持有真实路径的文件夹。右键菜单粘贴、第三方文件管理器暂不支持。\n" +
             "剪贴板内容不会被修改。双击托盘图标可打开最近保存的位置。",
-            "TianCai图片直粘 1.2"));
+            $"TianCai图片直粘 {UpdateChecker.CurrentVersion}"));
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         tray = new NotifyIcon { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application, Text = "TianCai图片直粘 · 已启用", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenLast();
@@ -129,6 +144,37 @@ internal sealed class TrayApp : ApplicationContext
     {
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
         return string.Equals(key?.GetValue("ImagePaste") as string, $"\"{Environment.ProcessPath}\"", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task CheckUpdateAsync()
+    {
+        if (!checkUpdate.Enabled || exiting) return;
+        checkUpdate.Enabled = false;
+        checkUpdate.Text = "正在检查更新…";
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(45));
+        try
+        {
+            var release = await UpdateChecker.CheckAsync(timeout.Token);
+            if (exiting) return;
+            if (release == null)
+                MessageBox.Show("暂未找到图片直粘的正式安装包，请稍后再试。", "检查更新");
+            else if (release.Version <= UpdateChecker.CurrentVersion)
+                MessageBox.Show($"当前版本：{UpdateChecker.CurrentVersion}\n暂无更新的正式版本。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            else if (MessageBox.Show($"发现新版本：{release.Version}\n当前版本：{UpdateChecker.CurrentVersion}\n\n是否打开官方发布页面查看更新说明并下载？\n下载后请退出旧程序，再解压替换。", "发现更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                Process.Start(new ProcessStartInfo(release.PageUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            if (exiting) return;
+            AppLog.Write(ex);
+            string reason = ex is OperationCanceledException ? "连接超时，请检查网络后重试。" : "无法完成更新检查，请检查网络或稍后重试。";
+            MessageBox.Show(reason + "\n图片粘贴功能不受影响。", "检查更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!exiting) { checkUpdate.Text = "检查更新"; checkUpdate.Enabled = true; }
+        }
     }
 
     private async void Paste(PasteRequest request)
@@ -173,12 +219,13 @@ internal sealed class TrayApp : ApplicationContext
     protected override void ExitThreadCore()
     {
         exiting = true;
+        updateCancellation.Cancel();
         hook.Enabled = false;
         if (!busy) base.ExitThreadCore();
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { hook.Dispose(); cursor.Dispose(); tray.Visible = false; tray.Dispose(); dispatcher.Dispose(); }
+        if (disposing) { updateCancellation.Dispose(); hook.Dispose(); cursor.Dispose(); tray.Visible = false; tray.Dispose(); dispatcher.Dispose(); }
         base.Dispose(disposing);
     }
 }

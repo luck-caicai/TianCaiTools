@@ -15,6 +15,24 @@ internal static class SelfTests
             try { action(); results.Add(new { name, passed = true }); }
             catch (Exception ex) { failed++; results.Add(new { name, passed = false, error = ex.ToString() }); }
         }
+        Test("Updates filter tool, draft, prerelease and missing packages; compare versions numerically", () =>
+        {
+            object Release(string tag, string version, bool draft = false, bool prerelease = false, bool package = true) => new
+            {
+                tag_name = tag, draft, prerelease,
+                assets = package ? new[] { new { name = $"image-paste-{version}-win-x64.zip", state = "uploaded", size = 100 } } : Array.Empty<object>()
+            };
+            string json = JsonSerializer.Serialize(new[] {
+                Release("other-tool/v99.0.0", "99.0.0"), Release("image-paste/v1.9.0", "1.9.0"),
+                Release("image-paste/v1.10.0", "1.10.0"), Release("image-paste/v8.0.0", "8.0.0", draft: true),
+                Release("image-paste/v9.0.0", "9.0.0", prerelease: true), Release("image-paste/v7.0.0", "7.0.0", package: false),
+                Release("image-paste/v6.0.0-beta", "6.0.0"), Release("image-paste/v5.0.0.0", "5.0.0.0") });
+            var latest = UpdateChecker.SelectLatest(json);
+            Assert(latest?.Version == new Version(1, 10, 0), "Incorrect release selected");
+            Assert(latest!.PageUrl.StartsWith("https://github.com/luck-caicai/TianCaiTools/releases/tag/"), "Untrusted release URL");
+            Assert(UpdateChecker.SelectLatest("[]", latest) == latest, "Previous page candidate was lost");
+            Assert(UpdateChecker.SelectLatest("[]") == null, "Empty list should not imply current version is latest");
+        });
         Test("PNG round trip preserves partial and full transparency", () =>
         {
             using var image = new Bitmap(2, 1, PixelFormat.Format32bppArgb);
