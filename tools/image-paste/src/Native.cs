@@ -23,6 +23,8 @@ internal static class Native
     [StructLayout(LayoutKind.Sequential)] internal struct Message
     { public nint Window; public uint Id; public nuint WParam; public nint LParam; public uint Time; public int X, Y; public uint Private; }
     [DllImport("user32.dll")] internal static extern nint GetForegroundWindow();
+    [DllImport("user32.dll")] internal static extern nint GetShellWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(nint window, out uint process);
     [DllImport("user32.dll")] internal static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
     [DllImport("user32.dll")] internal static extern nint GetParent(nint window);

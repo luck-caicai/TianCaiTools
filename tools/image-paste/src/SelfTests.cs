@@ -15,6 +15,22 @@ internal static class SelfTests
             try { action(); results.Add(new { name, passed = true }); }
             catch (Exception ex) { failed++; results.Add(new { name, passed = false, error = ex.ToString() }); }
         }
+        Test("Desktop host and missing focus allow fallback, edits and foreign focus do not", () =>
+        {
+            Assert(PasteTarget.AllowsDesktopFallback(0, 10, 20, ""), "Missing desktop focus rejected");
+            Assert(PasteTarget.AllowsDesktopFallback(10, 10, 20, "Progman"), "Progman focus rejected");
+            Assert(PasteTarget.AllowsDesktopFallback(10, 10, 10, "WorkerW"), "WorkerW focus rejected");
+            Assert(PasteTarget.AllowsDesktopFallback(20, 10, 20, "WorkerW"), "Separate desktop host rejected");
+            Assert(!PasteTarget.AllowsDesktopFallback(11, 10, 20, "Edit"), "Rename intercepted");
+            Assert(!PasteTarget.AllowsDesktopFallback(11, 10, 20, "WorkerW"), "Other host focus intercepted");
+            Assert(!PasteTarget.AllowsDesktopFallback(11, 10, 20, "TXMiniSkin"), "Third-party control intercepted");
+        });
+        Test("Caret blinking is allowed, menus and window moves block paste", () =>
+        {
+            Assert(PasteTarget.AllowsShortcut(0) && PasteTarget.AllowsShortcut(1), "Caret flag blocks paste");
+            foreach (uint flag in new uint[] { 2, 4, 8, 16, 5, 17 })
+                Assert(!PasteTarget.AllowsShortcut(flag), "Menu or move flag accepted");
+        });
         Test("Updates filter tool, draft, prerelease and missing packages; compare versions numerically", () =>
         {
             object Release(string tag, string version, bool draft = false, bool prerelease = false, bool package = true) => new

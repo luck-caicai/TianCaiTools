@@ -13,9 +13,23 @@ internal static class PasteTarget
         string type = Native.ClassName(window);
         bool desktop = type is "Progman" or "WorkerW";
         if (!desktop && type is not ("CabinetWClass" or "ExploreWClass")) return null;
-        uint thread = Native.GetWindowThreadProcessId(window, out _);
+        uint thread = Native.GetWindowThreadProcessId(window, out uint process);
+        uint shellProcess = 0;
+        if (desktop)
+        {
+            Native.GetWindowThreadProcessId(Native.GetShellWindow(), out shellProcess);
+            if (shellProcess == 0 || process != shellProcess) return null;
+        }
         var info = new Native.GuiThreadInfo { Size = (uint)Marshal.SizeOf<Native.GuiThreadInfo>() };
-        if (!Native.GetGUIThreadInfo(thread, ref info) || info.Focus == 0 || info.Flags != 0) return null;
+        if (!Native.GetGUIThreadInfo(thread, ref info) || !AllowsShortcut(info.Flags)) return null;
+        // Showing the desktop can focus its host (or nothing), while Explorer keeps
+        // the icon view under a separate WorkerW. Never use this fallback for edits.
+        if (desktop)
+        {
+            nint view = FindDesktopView(window, shellProcess);
+            if (view != 0 && AllowsDesktopFallback(info.Focus, window, Native.GetParent(view), Native.ClassName(info.Focus)))
+                return new(window, info.Focus, view, true, Native.GetClipboardSequenceNumber());
+        }
         // Only a shell file view may receive the shortcut. Edit controls include file rename.
         string focusClass = Native.ClassName(info.Focus);
         if (focusClass is not ("DirectUIHWND" or "SysListView32" or "SHELLDLL_DefView")) return null;
@@ -26,6 +40,29 @@ internal static class PasteTarget
                 return new(window, info.Focus, ancestor, desktop, Native.GetClipboardSequenceNumber());
         }
         return null;
+    }
+
+    internal static bool AllowsShortcut(uint flags) => (flags & 0x1e) == 0; // Moving/sizing and menus; blinking caret alone is harmless.
+
+    internal static bool AllowsDesktopFallback(nint focus, nint window, nint viewHost, string focusClass) =>
+        focus == 0 || ((focus == window || focus == viewHost) && focusClass is "Progman" or "WorkerW");
+
+    private static nint FindDesktopView(nint foreground, uint shellProcess)
+    {
+        nint view = Native.FindWindowEx(foreground, 0, "SHELLDLL_DefView", null);
+        if (view != 0 && Native.IsWindowVisible(view)) return view;
+        // Only Progman may delegate to another desktop host. An unrelated WorkerW
+        // without an icon view must not be treated as the desktop.
+        if (foreground != Native.GetShellWindow()) return 0;
+        for (nint host = Native.FindWindowEx(0, 0, "WorkerW", null); host != 0;
+            host = Native.FindWindowEx(0, host, "WorkerW", null))
+        {
+            Native.GetWindowThreadProcessId(host, out uint process);
+            if (process != shellProcess) continue;
+            view = Native.FindWindowEx(host, 0, "SHELLDLL_DefView", null);
+            if (view != 0 && Native.IsWindowVisible(view)) return view;
+        }
+        return 0;
     }
 
     internal static bool StillCurrent(PasteRequest request)
