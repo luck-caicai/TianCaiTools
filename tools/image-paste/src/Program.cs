@@ -110,6 +110,7 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(enabled);
         menu.Items.Add(startup);
         menu.Items.Add("打开最近保存的位置", null, (_, _) => OpenLast());
+        menu.Items.Add("工具所在位置", null, (_, _) => OpenToolLocation());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(checkUpdate);
         checkUpdate.Click += async (_, _) => await CheckUpdateAsync();
@@ -215,6 +216,19 @@ internal sealed class TrayApp : ApplicationContext
         if (lastImage != null && File.Exists(lastImage))
             Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{lastImage}\"") { UseShellExecute = true });
         else Notify("尚未保存图片", "先在桌面或文件夹中按 Ctrl + V 保存一张图片。", ToolTipIcon.Info);
+    }
+    private void OpenToolLocation()
+    {
+        try
+        {
+            string path = Environment.ProcessPath ?? throw new InvalidOperationException("无法获取当前程序路径。");
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex);
+            Notify("无法打开工具所在位置", ex.Message, ToolTipIcon.Warning);
+        }
     }
     protected override void ExitThreadCore()
     {
