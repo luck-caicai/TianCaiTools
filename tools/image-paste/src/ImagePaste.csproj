@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TianCai图片直粘</AssemblyName>
+    <RootNamespace>ImagePaste</RootNamespace>
+    <AssemblyTitle>TianCai图片直粘</AssemblyTitle>
+    <Company>TianCai</Company>
+    <Description>TianCai图片直粘：截图和复制图片后直接粘贴到文件夹。</Description>
+    <Product>TianCai图片直粘</Product>
+    <Version>1.2.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+</Project>

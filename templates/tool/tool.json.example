@@ -1,0 +1,7 @@
+{
+  "id": "example-tool",
+  "name": "TianCai示例工具",
+  "description": "一句话说明实际用途",
+  "project": "src/ExampleTool.csproj",
+  "executable": "TianCai示例工具.exe"
+}

@@ -1,0 +1,51 @@
+name: Check tools
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  discover:
+    runs-on: windows-latest
+    outputs:
+      matrix: ${{ steps.tools.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: tools
+        run: |
+          $matrix = ./scripts/validate.ps1 -AsJson
+          "matrix=$matrix" >> $env:GITHUB_OUTPUT
+  check:
+    needs: discover
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    env:
+      TOOL_ID: ${{ matrix.tool }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and run headless self-tests
+        run: ./scripts/test.ps1 -Tool $env:TOOL_ID
+      - name: Verify publish packaging
+        run: ./scripts/build.ps1 -Tool $env:TOOL_ID
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.tool }}-test-report
+          path: tools/${{ matrix.tool }}/artifacts/self-test.json
+          if-no-files-found: warn
+          retention-days: 14

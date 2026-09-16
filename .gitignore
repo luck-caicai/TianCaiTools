@@ -1,0 +1,20 @@
+# Build products and local test data are distributed through Releases, never Git.
+**/bin/
+**/obj/
+**/release/
+**/artifacts/
+**/TestResults/
+.vs/
+.idea/
+*.user
+*.suo
+*.log
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+.DS_Store
+Thumbs.db
+Desktop.ini

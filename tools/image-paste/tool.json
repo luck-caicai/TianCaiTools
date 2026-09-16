@@ -1,0 +1,7 @@
+{
+  "id": "image-paste",
+  "name": "TianCai图片直粘",
+  "description": "把截图和复制的图片直接粘贴为桌面或文件夹中的 PNG 文件",
+  "project": "src/ImagePaste.csproj",
+  "executable": "TianCai图片直粘.exe"
+}
