@@ -24,6 +24,15 @@ git push origin image-paste/v1.2.0
 
 普通提交不会发布版本。不覆盖已有正式版本或移动已发布标签；修复发布问题时使用新版本号。工作流会拒绝向已有同名 Release 追加或替换附件。
 
+也可以在明确要正式发布、草稿构建成功后，通过发布标签代替网页操作：
+
+```powershell
+git tag publish/image-paste/v1.2.0
+git push origin publish/image-paste/v1.2.0
+```
+
+`Publish verified draft` 会核对原版本的成功构建、工具版本、三个附件及 SHA-256，再将现有草稿正式发布。这个标签表示明确的正式发布指令，不能在仅需生成草稿时推送。
+
 ## 自动更新的后续接入
 
 当前工作流提供发布附件和元数据，**客户端自动检查、下载和替换程序尚未实现**。

@@ -1,0 +1,59 @@
+name: Publish verified draft
+
+on:
+  push:
+    tags: ['publish/*/v*']
+
+permissions:
+  contents: write
+  actions: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PUBLISH_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify draft and publish
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PUBLISH_TAG -notmatch '^publish/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)/v(\d+\.\d+\.\d+)$') { throw 'Invalid publish tag' }
+          $id = $Matches[1]
+          $version = $Matches[2]
+          $tag = "$id/v$version"
+          $tool = ./scripts/Get-Tool.ps1 -Tool $id
+          if ($tool.Version -ne $version) { throw 'Tool version differs' }
+          $commit = git rev-list -n 1 $tag
+          if ($LASTEXITCODE -ne 0 -or -not $commit) { throw 'Release tag missing' }
+          git merge-base --is-ancestor $commit HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag is not an ancestor of this publish request' }
+          $runsJson = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?head_sha=$commit&status=success&per_page=100"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify release build' }
+          $runs = $runsJson | ConvertFrom-Json
+          if (-not @($runs.workflow_runs | Where-Object { $_.head_branch -eq $tag -and $_.event -eq 'push' }).Count) { throw 'Successful release build not found' }
+          $releaseJson = gh release view $tag --json isDraft,isPrerelease,assets,tagName
+          if ($LASTEXITCODE -ne 0) { throw 'Release not found' }
+          $release = $releaseJson | ConvertFrom-Json
+          if (-not $release.isDraft -or $release.isPrerelease) { throw 'Expected a stable draft release' }
+          $asset = "$id-$version-win-x64.zip"
+          $expected = @($asset, "$asset.sha256", "$id-update.json")
+          foreach ($name in $expected) {
+            if (@($release.assets | Where-Object { $_.name -eq $name -and $_.state -eq 'uploaded' }).Count -ne 1) { throw "Missing uploaded asset: $name" }
+          }
+          gh release download $tag --dir verified --pattern $asset --pattern "$asset.sha256" --pattern "$id-update.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download release assets' }
+          $metadata = Get-Content "verified/$id-update.json" -Raw | ConvertFrom-Json
+          $hash = (Get-FileHash "verified/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = (Get-Content "verified/$asset.sha256" -Raw).Trim()
+          if ($metadata.id -ne $id -or $metadata.version -ne $version -or $metadata.tag -ne $tag -or $metadata.asset -ne $asset) { throw 'Metadata mismatch' }
+          if ($metadata.sha256 -ne $hash -or $checksum -ne "$hash  $asset" -or $metadata.size -ne (Get-Item "verified/$asset").Length) { throw 'Package integrity check failed' }
+          gh release edit $tag --draft=false --title "$($tool.Name) v$version"
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing failed' }
