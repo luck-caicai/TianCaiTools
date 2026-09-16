@@ -9,6 +9,31 @@ internal static class Program
     private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Length == 2 && args[0] == "--update-download-probe")
+        {
+            string? stage = null;
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                var release = UpdateChecker.CheckAsync(timeout.Token).GetAwaiter().GetResult()
+                    ?? throw new InvalidOperationException("没有可测试的正式发布包。");
+                stage = AutoUpdate.PrepareAsync(release, new Progress<int>(), timeout.Token).GetAwaiter().GetResult();
+                File.WriteAllText(args[1], System.Text.Json.JsonSerializer.Serialize(new { version = release.Version.ToString(), verified = true }));
+            }
+            catch (Exception ex) { File.WriteAllText(args[1], ex.ToString()); Environment.ExitCode = 1; }
+            finally { if (stage != null) AutoUpdate.Cleanup(stage); }
+            return;
+        }
+        if (args.Length == 3 && args[0] == "--update-helper-test")
+        {
+            Environment.ExitCode = AutoUpdate.RunHelper(args[1], message => File.WriteAllText(args[2], message));
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--apply-update")
+        {
+            Environment.ExitCode = AutoUpdate.RunHelper(args[1]);
+            return;
+        }
         if (args.Length == 2 && args[0] == "--update-probe")
         {
             try
@@ -62,7 +87,20 @@ internal static class Program
         using var singleton = new Mutex(true, "Local\\ImagePaste.Tray.v1", out bool first);
         if (!first) { MessageBox.Show("TianCai图片直粘已经在运行，请查看系统托盘。", "TianCai图片直粘"); return; }
         Application.ThreadException += (_, e) => AppLog.Write(e.Exception);
-        try { using var app = new TrayApp(); Application.Run(app); }
+        try
+        {
+            using var app = new TrayApp();
+            if (args.Length == 3 && args[0] == "--updated")
+            {
+                using var ready = EventWaitHandle.OpenExisting(args[1]);
+                ready.Set();
+                string stage = Path.GetFullPath(args[2]);
+                if (Path.GetDirectoryName(stage) == Path.GetDirectoryName(Environment.ProcessPath)
+                    && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(stage), @"\A\.tiancai-update-[a-f0-9]{32}\z"))
+                    _ = Task.Run(async () => { await Task.Delay(5000); AutoUpdate.Cleanup(stage); });
+            }
+            Application.Run(app);
+        }
         catch (Exception ex) { AppLog.Write(ex); MessageBox.Show(ex.Message, "TianCai图片直粘启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
 }
@@ -158,19 +196,38 @@ internal sealed class TrayApp : ApplicationContext
         {
             var release = await UpdateChecker.CheckAsync(timeout.Token);
             if (exiting) return;
+            timeout.CancelAfter(Timeout.InfiniteTimeSpan); // User may leave the confirmation open.
             if (release == null)
                 MessageBox.Show("暂未找到图片直粘的正式安装包，请稍后再试。", "检查更新");
             else if (release.Version <= UpdateChecker.CurrentVersion)
                 MessageBox.Show($"当前版本：{UpdateChecker.CurrentVersion}\n暂无更新的正式版本。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            else if (MessageBox.Show($"发现新版本：{release.Version}\n当前版本：{UpdateChecker.CurrentVersion}\n\n是否打开官方发布页面查看更新说明并下载？\n下载后请退出旧程序，再解压替换。", "发现更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-                Process.Start(new ProcessStartInfo(release.PageUrl) { UseShellExecute = true });
+            else if (MessageBox.Show($"发现新版本：{release.Version}\n当前版本：{UpdateChecker.CurrentVersion}\n\n是否立即下载并更新？下载完成后将自动重启，保留当前程序位置和开机启动设置。", "发现更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+            {
+                timeout.CancelAfter(TimeSpan.FromMinutes(10));
+                string? stage = null;
+                bool handedOff = false;
+                try
+                {
+                    checkUpdate.Text = "正在下载更新…";
+                    var progress = new Progress<int>(percent => { if (!exiting) checkUpdate.Text = $"正在下载更新… {percent}%"; });
+                    stage = await AutoUpdate.PrepareAsync(release, progress, timeout.Token);
+                    timeout.Token.ThrowIfCancellationRequested();
+                    checkUpdate.Text = "正在准备重启…";
+                    int guardId = cursor.GuardId;
+                    long guardStart = cursor.GuardStart;
+                    await Task.Run(() => AutoUpdate.StartHelper(stage, guardId, guardStart));
+                    handedOff = true;
+                    ExitThread(); // Completes active paste and restores cursor before releasing the EXE.
+                }
+                finally { if (!handedOff && stage != null) AutoUpdate.Cleanup(stage); }
+            }
         }
         catch (Exception ex)
         {
             if (exiting) return;
             AppLog.Write(ex);
-            string reason = ex is OperationCanceledException ? "连接超时，请检查网络后重试。" : "无法完成更新检查，请检查网络或稍后重试。";
-            MessageBox.Show(reason + "\n图片粘贴功能不受影响。", "检查更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            string reason = ex is OperationCanceledException ? "连接超时，请检查网络后重试。" : "无法完成更新：" + ex.Message;
+            MessageBox.Show(reason + "\n当前版本仍可继续使用。", "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {

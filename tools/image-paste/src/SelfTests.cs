@@ -15,6 +15,51 @@ internal static class SelfTests
             try { action(); results.Add(new { name, passed = true }); }
             catch (Exception ex) { failed++; results.Add(new { name, passed = false, error = ex.ToString() }); }
         }
+        Test("Updater verifies checksum and rejects ZIP traversal before extraction", () =>
+        {
+            string root = Path.Combine(Path.GetTempPath(), "ImagePaste-update-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                string zip = Path.Combine(root, "test.zip"), output = Path.Combine(root, "new.exe");
+                void Package(string name)
+                {
+                    File.Delete(zip);
+                    using var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create);
+                    using var writer = new StreamWriter(archive.CreateEntry(name).Open());
+                    writer.Write("test payload");
+                }
+                Package(AutoUpdate.Executable);
+                string sum = AutoUpdate.Hash(zip) + "  test.zip";
+                Throws(() => AutoUpdate.ExtractVerified(zip, new string('0', 64) + "  test.zip", "test.zip", output));
+                Assert(!File.Exists(output), "Bad checksum wrote output");
+                Throws(() => AutoUpdate.ExtractVerified(zip, sum, "other.zip", output));
+                AutoUpdate.ExtractVerified(zip, sum, "test.zip", output);
+                Assert(File.ReadAllText(output) == "test payload", "Verified payload differs");
+                File.Delete(output);
+                Package("../escape.exe");
+                Throws(() => AutoUpdate.ExtractVerified(zip, AutoUpdate.Hash(zip) + "  test.zip", "test.zip", output));
+                Assert(!File.Exists(output), "Unsafe archive wrote output");
+            }
+            finally { foreach (string file in Directory.GetFiles(root)) File.Delete(file); Directory.Delete(root); }
+        });
+        Test("Updater replaces executable, preserves adjacent files and restores on failed startup", () =>
+        {
+            string root = Path.Combine(Path.GetTempPath(), "ImagePaste-update-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                string target = Path.Combine(root, "app.exe"), payload = Path.Combine(root, "new.exe"), other = Path.Combine(root, "user.txt");
+                File.WriteAllText(target, "old"); File.WriteAllText(payload, "new"); File.WriteAllText(other, "user");
+                AutoUpdate.Install(payload, target, () => Assert(File.ReadAllText(target) == "new", "Launch before replace"));
+                Assert(File.ReadAllText(target + ".previous") == "old", "Backup missing");
+                File.WriteAllText(payload, "broken");
+                Throws(() => AutoUpdate.Install(payload, target, () => throw new Exception("Simulated startup failure")));
+                Assert(File.ReadAllText(target) == "new", "Rollback failed");
+                Assert(File.ReadAllText(other) == "user", "Unrelated file changed");
+            }
+            finally { foreach (string file in Directory.GetFiles(root)) File.Delete(file); Directory.Delete(root); }
+        });
         Test("Tencent desktop accepts host paste but excludes edits, menus, panels and other apps", () =>
         {
             Assert(PasteTarget.IsTencentDesktopTarget("DesktopMgr64", true, 0, true), "Observed DeskGo desktop rejected");

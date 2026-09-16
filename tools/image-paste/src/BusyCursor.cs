@@ -13,6 +13,8 @@ internal sealed class BusyCursor : IDisposable
     private readonly EventWaitHandle active, changed, acknowledged, ready, stop;
     private readonly Process guard;
     private bool disposed;
+    internal int GuardId => guard.Id;
+    internal long GuardStart => guard.StartTime.ToUniversalTime().Ticks;
 
     internal BusyCursor()
     {

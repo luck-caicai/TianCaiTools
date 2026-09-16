@@ -1,8 +1,9 @@
-param([Parameter(Mandatory)][string]$Tool, [string]$Dotnet = 'dotnet')
+param([Parameter(Mandatory)][string]$Tool, [string]$Dotnet = 'dotnet', [switch]$VersionedOutput)
 $ErrorActionPreference = 'Stop'
 $info = & (Join-Path $PSScriptRoot 'Get-Tool.ps1') -Tool $Tool
 $release = Join-Path $info.Root 'release'
 $output = Join-Path $release $info.Name
+if ($VersionedOutput) { $output = Join-Path $release "$($info.Name)-$($info.Version)" }
 & $Dotnet publish $info.Project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 Copy-Item -LiteralPath (Join-Path $info.Root 'README.md') -Destination (Join-Path $output '使用说明.md')
