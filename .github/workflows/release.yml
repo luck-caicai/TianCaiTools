@@ -12,36 +12,57 @@ defaults:
     shell: pwsh
 
 jobs:
-  release:
+  discover:
     runs-on: windows-latest
+    outputs:
+      tool: ${{ steps.tool.outputs.id }}
+      version: ${{ steps.tool.outputs.version }}
+      type: ${{ steps.tool.outputs.type }}
+      runner: ${{ steps.tool.outputs.runner }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-      - name: Validate tool and version
+      - id: tool
+        name: Validate tool and version
         run: |
+          $ErrorActionPreference = 'Stop'
           if ($env:RELEASE_TAG -notmatch '^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)/v(\d+\.\d+\.\d+)$') { throw 'Invalid release tag' }
           $id = $Matches[1]
           $version = $Matches[2]
           $tool = ./scripts/Get-Tool.ps1 -Tool $id
           if ($tool.Version -ne $version) { throw 'Tag and project version differ' }
-          "TOOL_ID=$id" >> $env:GITHUB_ENV
-          "TOOL_VERSION=$version" >> $env:GITHUB_ENV
+          "id=$id" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "type=$($tool.Type)" >> $env:GITHUB_OUTPUT
+          "runner=$($tool.Runner)" >> $env:GITHUB_OUTPUT
+  release:
+    needs: discover
+    runs-on: ${{ needs.discover.outputs.runner }}
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      TOOL_ID: ${{ needs.discover.outputs.tool }}
+      TOOL_VERSION: ${{ needs.discover.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        if: needs.discover.outputs.type == 'dotnet-windows'
+        with:
+          dotnet-version: '8.0.x'
       - name: Test
         run: ./scripts/test.ps1 -Tool $env:TOOL_ID
       - name: Package
         run: ./scripts/build.ps1 -Tool $env:TOOL_ID
       - name: Create draft release
         run: |
+          $ErrorActionPreference = 'Stop'
           $id = $env:TOOL_ID
           $version = $env:TOOL_VERSION
-          $package = "tools/$id/release/$id-$version-win-x64.zip"
+          $tool = ./scripts/Get-Tool.ps1 -Tool $id
+          $package = "tools/$id/release/$id-$version-$($tool.Platform).zip"
           gh release view $env:RELEASE_TAG --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) { throw 'This release already exists; do not overwrite it' }
-          gh release create $env:RELEASE_TAG $package "$package.sha256" "tools/$id/release/$id-update.json" --verify-tag --draft --title "$id v$version" --notes-file "tools/$id/CHANGELOG.md"
+          gh release create $env:RELEASE_TAG $package "$package.sha256" "tools/$id/release/$id-update.json" --verify-tag --draft --title "$($tool.Name) v$version" --notes-file "tools/$id/CHANGELOG.md"
           if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed' }

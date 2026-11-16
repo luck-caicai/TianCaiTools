@@ -1,6 +1,16 @@
 param([Parameter(Mandatory)][string]$Tool, [string]$Dotnet = 'dotnet')
 $ErrorActionPreference = 'Stop'
 $info = & (Join-Path $PSScriptRoot 'Get-Tool.ps1') -Tool $Tool
+if ($info.Type -eq 'swift-macos') {
+    if (-not $IsMacOS) { throw 'Swift macOS 工具必须在 Mac 上运行自检' }
+    & zsh (Join-Path $info.Root 'scripts/test.sh')
+    if ($LASTEXITCODE -ne 0) { throw 'macOS self-tests failed' }
+    $report = Join-Path $info.Root 'artifacts/self-test.json'
+    $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+    if ($null -eq $result.failed -or $result.failed -ne 0 -or $result.passed -lt 1) { throw 'Invalid or failed self-test report' }
+    Write-Host "Tests passed: $($result.passed). Report: $report"
+    return
+}
 $output = Join-Path $info.Root 'artifacts/test-bin'
 $report = Join-Path $info.Root 'artifacts/self-test.json'
 & $Dotnet build $info.Project -c Release -o $output

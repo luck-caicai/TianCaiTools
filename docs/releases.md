@@ -11,6 +11,8 @@
 
 每个工具各自发版，不因为一个工具升级就提高其他工具的版本。
 
+macOS 工具 `ctrl-switch` 的版本从 `tools/ctrl-switch/Resources/Info.plist` 读取。标签示例为 `ctrl-switch/v1.0.1`，安装包为 `ctrl-switch-1.0.1-macos-arm64.zip`，更新元数据为 `ctrl-switch-update.json`。构建仍会生成 ZIP、SHA-256 文件和元数据三个附件，但该应用当前没有自动更新客户端。
+
 ## 发布操作
 
 先确认该版本 CHANGELOG 和测试完整，并将提交推送到 main。然后在准备发布时执行：
@@ -20,7 +22,7 @@ git tag image-paste/v1.2.0
 git push origin image-paste/v1.2.0
 ```
 
-`release.yml` 解析标签并验证它与项目版本一致，只构建对应工具。自检通过后上传 ZIP、更新元数据和 SHA-256 校验文件到 **草稿 Release**。在 GitHub 检查说明和附件后发布草稿，用户才会在公开发布列表看到它。
+`release.yml` 解析标签并验证它与项目版本一致，选择对应平台的 runner，只构建对应工具。自检通过后上传 ZIP、更新元数据和 SHA-256 校验文件到 **草稿 Release**。在 GitHub 检查说明和附件后发布草稿，用户才会在公开发布列表看到它。
 
 普通提交不会发布版本。不覆盖已有正式版本或移动已发布标签；修复发布问题时使用新版本号。工作流会拒绝向已有同名 Release 追加或替换附件。
 

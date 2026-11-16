@@ -1,12 +1,13 @@
 # TianCaiTools · TianCai 小工具集
 
-面向 Windows 的实用小工具。一个仓库维护多个工具，每个工具独立运行、独立版本、独立发布。
+面向 Windows 和 macOS 的实用小工具。一个仓库维护多个工具，每个工具独立运行、独立版本、独立发布。
 
 ## 工具目录
 
-| 工具 | 标识 | 说明 |
-|---|---|---|
-| [TianCai图片直粘](tools/image-paste/README.md) | `image-paste` | 将截图或复制的图片用 Ctrl + V 直接保存到桌面、文件夹 |
+| 工具 | 标识 | 平台 | 说明 |
+|---|---|---|---|
+| [TianCai图片直粘](tools/image-paste/README.md) | `image-paste` | Windows x64 | 将截图或复制的图片用 Ctrl + V 直接保存到桌面、文件夹 |
+| [TianCai快捷键开关](tools/ctrl-switch/README.md) | `ctrl-switch` | macOS / Apple Silicon | 菜单栏一键切换七组 Ctrl 快捷键，显示 Win Ctrl / Mac Ctrl |
 
 [下载发布版本](https://github.com/luck-caicai/TianCaiTools/releases) · [开发规范](docs/development.md) · [发布流程](docs/releases.md)
 
@@ -18,13 +19,14 @@
 TianCaiTools/
 ├─ AGENTS.md                  AI 与开发者共同遵守的约定
 ├─ tools/
-│  └─ image-paste/
+│  ├─ image-paste/
 │     ├─ tool.json            稳定标识、名称、项目路径
 │     ├─ src/                 C# 项目与源码
 │     ├─ scripts/             专属辅助脚本
 │     ├─ build.ps1            从工具目录构建的便捷入口
 │     ├─ README.md
 │     └─ CHANGELOG.md
+│  └─ ctrl-switch/            Swift / AppKit 原生 macOS 工具
 ├─ scripts/                   统一校验、构建和测试
 ├─ templates/tool/            新工具接入清单与示例
 ├─ docs/                      开发、版本及发布规范
@@ -45,7 +47,16 @@ TianCaiTools/
 
 如果 SDK 未加入 PATH，可向构建/测试命令传入 `-Dotnet 'C:\path\to\dotnet.exe'`。
 
-构建默认生成内置运行时的 Windows x64 便携版。图片直粘从 1.4.0 起支持手动检查更新后，确认即可自动下载、校验、替换并重启；没有统一启动器，不定时自动检查。
+Windows 工具默认生成内置运行时的 x64 便携版。图片直粘从 1.4.0 起支持手动检查更新后，确认即可自动下载、校验、替换并重启；没有统一启动器，不定时自动检查。
+
+Mac 上安装 Apple Command Line Tools 后可直接构建原生工具，无需 .NET 或 PowerShell：
+
+```sh
+zsh tools/ctrl-switch/scripts/test.sh
+zsh tools/ctrl-switch/scripts/build.sh
+```
+
+若已安装 PowerShell 7，也可以使用统一入口：`./scripts/test.ps1 -Tool ctrl-switch` 与 `./scripts/build.ps1 -Tool ctrl-switch`。macOS 安装包为 Apple Silicon 的 `.app` ZIP，当前使用 ad-hoc 签名；安装与授权说明见工具 README。
 
 ## 加入新工具
 
