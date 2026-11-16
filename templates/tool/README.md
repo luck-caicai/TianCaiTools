@@ -2,6 +2,8 @@
 
 此目录只是模板说明，不是实际工具，不参与构建。
 
+下面为 .NET/Windows 接入方式。Swift/macOS 工具参照 `tools/ctrl-switch/`，使用 `type: "swift-macos"`、Info.plist 版本源和本工具的原生构建、自检脚本。
+
 1. 创建 `tools/<稳定英文ID>/src/`。
 2. 把 `tool.json.example` 复制为该目录的 `tool.json`，填写 ID、品牌名、简介、项目路径及 EXE 文件名。
 3. 创建 .NET 8 Windows 项目，设置 AssemblyName、RootNamespace 和 Version。

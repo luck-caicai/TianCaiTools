@@ -7,14 +7,14 @@
 - 一个工具一个目录：`tools/<tool-id>/`，标识使用英文小写加短横线，例如 `image-paste`；标识发布后保持稳定。
 - 展示名称使用 `TianCai` 品牌，例如 `TianCai图片直粘`。文件夹标识与展示名称分开管理。
 - 每个工具必须有 `tool.json`、`README.md`、`CHANGELOG.md`、`src/` 和 `build.ps1`。
-- .NET 项目在 `src/` 中；工具专属辅助脚本在本工具的 `scripts/` 中。根目录 `scripts/` 仅放仓库级脚本。
+- .NET 项目和 Swift 源码在 `src/` 中；工具专属辅助脚本在本工具的 `scripts/` 中。根目录 `scripts/` 仅放仓库级脚本。
 - 构建输出放本工具的 `release/`，测试报告和临时输出放本工具的 `artifacts/`，两者禁止提交 Git。
 - 只有至少两个工具已有真实复用需求时才在根目录 `shared/` 提取公共代码，不预先搭建插件框架或公共服务。
 - 不创建嵌套 Git 仓库，不把新工具源码直接放仓库根目录。
 
 ## 开发与验证
 
-- 当前通用构建流程面向 .NET 8 Windows 桌面工具。新增其他技术栈时先补齐对应构建/检查流程，不伪装成 .NET 项目。
+- `tool.json` 的 `type` 可为 `dotnet-windows`（省略时的默认值）或 `swift-macos`。统一流程分别在 Windows 和 macOS runner 上运行；新增技术栈时先补齐构建/检查流程。
 - 使用 `scripts/validate.ps1` 校验目录、元数据和版本；使用 `scripts/build.ps1 -Tool <id>` 发布；使用 `scripts/test.ps1 -Tool <id>` 运行无界面的自检。
 - 运行中的托盘程序可能锁住发布文件；更新前退出对应工具。图片直粘的光标恢复子进程必须等其自行恢复并退出，不能先杀掉恢复进程。
 - 修改快捷键、剪贴板、资源管理器或光标逻辑时，要验证正常结束与失败后的清理；自动化未覆盖的 UI 场景明确记录，不能把构建成功当作实机验证。
@@ -25,9 +25,9 @@
 
 ## 版本与发布
 
-- 每个工具独立版本；版本唯一来源是其 `.csproj` 的 `<Version>`，使用 `主版本.次版本.修订号`。
+- 每个工具独立版本，使用 `主版本.次版本.修订号`。.NET 工具的唯一版本来源是 `.csproj` 的 `<Version>`；Swift 工具的唯一版本来源是 `tool.json.project` 指向的 Info.plist 的 `CFBundleShortVersionString`。
 - 发版先更新该工具版本与 CHANGELOG.md。Git 标签格式固定为 `<tool-id>/v<version>`，例如 `image-paste/v1.2.0`。
-- 安装包固定为 `<tool-id>-<version>-win-x64.zip`。EXE 展示名称允许中文。
+- 安装包固定为 `<tool-id>-<version>-<platform>.zip`；当前平台标识是 `win-x64` 和 `macos-arm64`。EXE 与 APP 展示名称允许中文。
 - 根目录 README 的工具目录需随新工具同步更新。新工具参照 `templates/tool/README.md` 和 `docs/development.md`。
 - 提交前检查暂存区，不提交 EXE、ZIP、日志、个人路径报告、截图或密钥；安装包上传 GitHub Releases。
 - 推送 main 只运行 CI。只有明确要发布某个版本时才创建并推送版本标签；发布工作流生成草稿 Release。

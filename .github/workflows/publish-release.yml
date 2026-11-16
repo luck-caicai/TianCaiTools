@@ -43,7 +43,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release not found' }
           $release = $releaseJson | ConvertFrom-Json
           if (-not $release.isDraft -or $release.isPrerelease) { throw 'Expected a stable draft release' }
-          $asset = "$id-$version-win-x64.zip"
+          $asset = "$id-$version-$($tool.Platform).zip"
           $expected = @($asset, "$asset.sha256", "$id-update.json")
           foreach ($name in $expected) {
             if (@($release.assets | Where-Object { $_.name -eq $name -and $_.state -eq 'uploaded' }).Count -ne 1) { throw "Missing uploaded asset: $name" }

@@ -1,6 +1,14 @@
 param([Parameter(Mandatory)][string]$Tool, [string]$Dotnet = 'dotnet', [switch]$VersionedOutput)
 $ErrorActionPreference = 'Stop'
 $info = & (Join-Path $PSScriptRoot 'Get-Tool.ps1') -Tool $Tool
+if ($info.Type -eq 'swift-macos') {
+    if (-not $IsMacOS) { throw 'Swift macOS 工具必须在 Mac 上构建' }
+    $arguments = @((Join-Path $info.Root 'scripts/build.sh'))
+    if ($VersionedOutput) { $arguments += '--versioned-output' }
+    & zsh @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'macOS build failed' }
+    return
+}
 $release = Join-Path $info.Root 'release'
 $output = Join-Path $release $info.Name
 if ($VersionedOutput) { $output = Join-Path $release "$($info.Name)-$($info.Version)" }
