@@ -2,6 +2,12 @@
 
 面向 Apple Silicon Mac 的原生菜单栏程序。使用 Swift、AppKit 和系统键盘事件 API，无第三方依赖、无驱动、无主窗口，不占 Dock。
 
+## 为什么开发这个工具
+
+使用的是 macOS，键盘却是 Windows 键盘；或者刚从 Windows 切换到 Mac，还习惯用 Ctrl 复制、粘贴、保存、全选、剪切、查找和撤销。常用操作需要反复想键位、改手势或纠正误按，容易产生停顿，打断原本熟悉的操作节奏。同时使用 Windows 和 Mac 的用户，也会遇到来回适应两套快捷键的问题。
+
+这个工具为这些高频操作提供一个菜单栏开关：开启 `Win Ctrl` 时沿用熟悉的七组 Ctrl 快捷键，关闭后显示 `Mac Ctrl`，恢复 Mac 原生操作。键盘布局以及 Ctrl、Command、Win、Alt 的原有身份和位置保持不变，让日常快捷键操作更连贯。
+
 ## 使用
 
 将发布包中的 `CtrlSwitch.app` 放入「应用程序」后打开，右上角会出现一个小开关：开启时显示 `Win Ctrl`，关闭时显示 `Mac Ctrl`。自行编译时应用位于本工具的 `release/CtrlSwitch.app`。
@@ -26,7 +32,23 @@
 
 左右 Ctrl 均可使用。Ctrl、Command、Win、Alt 的按键身份和位置保持原样，原有 Command 快捷键照常有效。其他组合键及带 Shift、Option、Command、Fn 的扩展组合保持原样。Caps Lock 状态会保留。
 
-Terminal、iTerm2、Ghostty、Warp、kitty、Alacritty、WezTerm 等独立终端保留 Ctrl+C 中断及其他原有控制操作。IDE 内嵌终端不属于独立终端，使用时可点击开关暂停转换。Finder 的文件移动沿用 macOS 原生方式：Command+C 后用 Option+Command+V 移动；本程序不会把 Ctrl+X 改造成文件移动操作。
+## 终端快捷键：特别注意
+
+**终端中的 Ctrl+C 用于中断当前命令，不能把它当作复制。已适配的独立终端会自动跳过上述七组转换，保留原有控制操作。**
+
+| 终端操作 | 使用的快捷键 |
+| --- | --- |
+| 中断当前命令 | Ctrl+C |
+| 复制选中的内容 | Command+C |
+| 粘贴内容 | Command+V |
+
+这项例外适用于 Terminal、iTerm2、Ghostty、Warp、kitty、Alacritty、WezTerm、WindTerm 等已适配的独立终端，开启 `Win Ctrl` 时也会保留。
+
+**VS Code 等 IDE 的内嵌终端需要手动切到 `Mac Ctrl`。** 当前程序按独立应用识别终端，使用内嵌终端前先点击菜单栏开关关闭转换，保留 Ctrl+C 中断；复制、粘贴继续使用 Command+C / Command+V。
+
+## 其他使用范围
+
+Finder 的文件移动沿用 macOS 原生方式：Command+C 后用 Option+Command+V 移动；本程序不会把 Ctrl+X 改造成文件移动操作。
 
 程序仅在当前登录会话工作。登录界面和系统启用安全输入的区域由 macOS 管理，系统可能暂停键盘事件转换。它不读取剪贴板、不保存按键内容，也没有联网功能。
 

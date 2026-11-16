@@ -9,6 +9,8 @@
 | [TianCai图片直粘](tools/image-paste/README.md) | `image-paste` | Windows x64 | 将截图或复制的图片用 Ctrl + V 直接保存到桌面、文件夹 |
 | [TianCai快捷键开关](tools/ctrl-switch/README.md) | `ctrl-switch` | macOS / Apple Silicon | 菜单栏一键切换七组 Ctrl 快捷键，显示 Win Ctrl / Mac Ctrl |
 
+快捷键开关面向在 Mac 上使用 Windows 键盘、刚从 Windows 迁移到 Mac，或经常切换两套系统的用户，减少因不熟悉快捷键而产生的操作停顿。**已适配的独立终端保留 Ctrl+C 中断，复制、粘贴仍用 Command+C / Command+V；IDE 内嵌终端需先切到 Mac Ctrl。** 详见[使用说明](tools/ctrl-switch/README.md)。
+
 [下载发布版本](https://github.com/luck-caicai/TianCaiTools/releases) · [开发规范](docs/development.md) · [发布流程](docs/releases.md)
 
 首次仓库整理只提交源码与工作流；安装包由后续发布流程提供。本地现有程序仍在对应工具的 `release/` 目录。
