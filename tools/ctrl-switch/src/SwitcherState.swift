@@ -124,6 +124,12 @@ struct ImageBudget<Value> {
     var count: Int { entries.count }
     var keys: Set<String> { Set(entries.keys) }
 
+    // Keep this explicit: older Swift synthesizes a private memberwise initializer when storage is private.
+    init(countLimit: Int, byteLimit: Int) {
+        self.countLimit = countLimit
+        self.byteLimit = byteLimit
+    }
+
     mutating func value(for key: String) -> Value? {
         guard let value = entries[key]?.value else { return nil }
         lru.removeAll { $0 == key }; lru.append(key)

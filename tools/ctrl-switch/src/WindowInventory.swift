@@ -228,6 +228,11 @@ final class WindowInventory {
         }
         if app.isHidden { app.unhide() }
         app.activate(options: [])
+        // Advance the intended MRU immediately: a second quick Alt+Tab must not wait for the debounced
+        // AX focus notification and choose the same destination twice. The next scan reconciles reality.
+        focusedID = window.id
+        recency.focus(window.id)
+        onChanged?()
         focusQueue.async { [weak self] in
             let axApp = AXUIElementCreateApplication(window.pid)
             AXUIElementSetMessagingTimeout(axApp, 0.2)
