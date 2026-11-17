@@ -7,7 +7,7 @@
 | 工具 | 标识 | 平台 | 说明 |
 |---|---|---|---|
 | [TianCai图片直粘](tools/image-paste/README.md) | `image-paste` | Windows x64 | 将截图或复制的图片用 Ctrl + V 直接保存到桌面、文件夹 |
-| [TianCai快捷键开关](tools/ctrl-switch/README.md) | `ctrl-switch` | macOS / Apple Silicon | 菜单栏一键切换七组 Ctrl 快捷键，显示 Win Ctrl / Mac Ctrl |
+| [TianCai快捷键开关](tools/ctrl-switch/README.md) | `ctrl-switch` | macOS / Apple Silicon | 七组 Ctrl 快捷键开关、Alt+Tab 窗口切换与按需预览 |
 
 快捷键开关面向在 Mac 上使用 Windows 键盘、刚从 Windows 迁移到 Mac，或经常切换两套系统的用户，减少因不熟悉快捷键而产生的操作停顿。**已适配的独立终端保留 Ctrl+C 中断，复制、粘贴仍用 Command+C / Command+V；IDE 内嵌终端需先切到 Mac Ctrl。** 详见[使用说明](tools/ctrl-switch/README.md)。
 

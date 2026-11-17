@@ -13,11 +13,8 @@ export CLANG_MODULE_CACHE_PATH="$task_build/module-cache"
 export SWIFT_MODULECACHE_PATH="$task_build/module-cache"
 xcrun swiftc -O -whole-module-optimization -swift-version 5 -target arm64-apple-macos13.0 \
     -module-cache-path "$task_build/module-cache" \
-    "$task_root/src/ShortcutTransformer.swift" \
-    "$task_root/src/EventTapController.swift" \
-    "$task_root/src/AppDelegate.swift" \
-    "$task_root/src/main.swift" \
-    -framework AppKit -framework ApplicationServices -framework ServiceManagement \
+    "$task_root"/src/*.swift \
+    -framework AppKit -framework ApplicationServices -framework ServiceManagement -framework ScreenCaptureKit \
     -o "$task_app/Contents/MacOS/CtrlSwitch"
 cp "$task_root/Resources/Info.plist" "$task_app/Contents/Info.plist"
 xcrun swift -module-cache-path "$task_build/module-cache" "$task_root/scripts/make-icon.swift" \
