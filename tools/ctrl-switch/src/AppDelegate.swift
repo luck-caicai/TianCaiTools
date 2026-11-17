@@ -1,16 +1,25 @@
 import AppKit
 import ApplicationServices
 import ServiceManagement
+import Darwin
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let defaults = UserDefaults.standard
     private var controller: EventTapController!
+    private var switcher: WindowSwitcherController!
     private var statusItem: NSStatusItem!
     private var contextualMenu: NSMenu!
     private var toggleMenuItem: NSMenuItem!
     private var permissionMenuItem: NSMenuItem!
     private var startupMenuItem: NSMenuItem!
     private var statusMenuItem: NSMenuItem!
+    private var altTabMenuItem: NSMenuItem!
+    private var previewsMenuItem: NSMenuItem!
+    private var screenPermissionMenuItem: NSMenuItem!
+    private var diagnosticObserver: NSObjectProtocol?
+    private var exerciseResult: [String: Any]?
+    private var startupStatus = SMAppService.mainApp.status
+    private var appearanceKey = ""
     private var showingPermissionHelp = false
     private var permissionHelpPresentedThisRun = false
     private let preview = CommandLine.arguments.contains("--preview")
@@ -23,22 +32,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         NSApp.setActivationPolicy(.accessory)
-        defaults.register(defaults: ["shortcutsEnabled": true])
+        defaults.register(defaults: ["shortcutsEnabled": true, "altTabEnabled": true, "windowPreviewsEnabled": true])
         controller = EventTapController(enabled: defaults.bool(forKey: "shortcutsEnabled"))
+        switcher = WindowSwitcherController(enabled: defaults.bool(forKey: "altTabEnabled"),
+            previewsEnabled: defaults.bool(forKey: "windowPreviewsEnabled"))
         controller.onStatusChanged = { [weak self] _ in self?.updateAppearance() }
+        controller.onAvailabilityChanged = { [weak self] available in
+            self?.switcher.setKeyboardAvailable(available)
+            self?.updateAppearance()
+        }
+        controller.onKeyboardEvent = { [weak self] type, event in self?.switcher.handle(type: type, event: event) ?? false }
+        controller.hasPendingSwitcherReleases = { [weak self] in self?.switcher.hasPendingReleases ?? false }
+        controller.onInputInterrupted = { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.switcher.cancel(resetKeys: true) }
+        }
+        switcher.onKeyReleasesDrained = { [weak self] in self?.controller.reconcile() }
+        switcher.onChanged = { [weak self] in self?.updateAppearance() }
         makeStatusItem()
         makeMenu()
-        if !preview { controller.start() }
+        if !preview { controller.switcherEnabled = switcher.isEnabled; controller.start() }
+        installReadOnlyDiagnostics()
         updateAppearance()
-        if !preview, controller.isEnabled, !AXIsProcessTrusted() {
+        if !preview, (controller.isEnabled || switcher.isEnabled), !AXIsProcessTrusted() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                 guard let self, !self.permissionHelpPresentedThisRun else { return }
                 self.showPermissionHelp()
             }
         }
+        if CommandLine.arguments.contains("--exercise-switcher") { scheduleExercise(attempt: 0) }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { controller?.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        switcher?.stop()
+        controller?.stop()
+        if let diagnosticObserver { DistributedNotificationCenter.default().removeObserver(diagnosticObserver) }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switcher.stop()
+        controller.stop()
+        guard switcher.previews.hasInFlightRequest else { return .terminateNow }
+        let deadline = Date().addingTimeInterval(2)
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
+            if self?.switcher.previews.hasInFlightRequest != true || Date() >= deadline {
+                timer.invalidate()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return .terminateLater
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        switcher?.previews.refreshPermission()
+        controller?.reconcile()
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if controller?.status == .needsPermission, !permissionHelpPresentedThisRun { showPermissionHelp() }
@@ -87,6 +135,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         contextualMenu.addItem(permissionMenuItem)
         contextualMenu.addItem(.separator())
 
+        altTabMenuItem = NSMenuItem(title: "启用 Alt+Tab 窗口切换", action: #selector(toggleAltTab), keyEquivalent: "")
+        altTabMenuItem.target = self
+        contextualMenu.addItem(altTabMenuItem)
+        previewsMenuItem = NSMenuItem(title: "显示窗口预览", action: #selector(toggleWindowPreviews), keyEquivalent: "")
+        previewsMenuItem.target = self
+        contextualMenu.addItem(previewsMenuItem)
+        screenPermissionMenuItem = NSMenuItem(title: "允许窗口截图…", action: #selector(openScreenRecordingSettings), keyEquivalent: "")
+        screenPermissionMenuItem.target = self
+        contextualMenu.addItem(screenPermissionMenuItem)
+        contextualMenu.addItem(.separator())
+
         startupMenuItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         startupMenuItem.target = self
         contextualMenu.addItem(startupMenuItem)
@@ -124,6 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        startupStatus = SMAppService.mainApp.status
+        switcher.cancel()
+        switcher.previews.refreshPermission()
         if !preview { controller.reconcile() }
         updateAppearance()
     }
@@ -131,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateAppearance() {
         guard statusItem != nil, contextualMenu != nil else { return }
         let actualStatus = preview && controller.isEnabled ? EventTapController.Status.enabled : controller.status
+        let key = "\(actualStatus.rawValue)|\(controller.isEnabled)|\(controller.isAvailable)|\(switcher.isEnabled)|\(switcher.previewsEnabled)|\(switcher.previews.status.rawValue)|\(startupStatus.rawValue)"
+        guard key != appearanceKey else { return }
+        appearanceKey = key
         let isOn = actualStatus == .enabled
         let needsAttention = actualStatus == .needsPermission || actualStatus == .unavailable
         statusItem.button?.title = isOn ? "Win Ctrl" : "Mac Ctrl"
@@ -147,8 +212,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.toolTip = "Ctrl 开关：\(description)\n右键：登录时启动 / 退出\n终端应用保留原快捷键"
         statusMenuItem.title = description
         toggleMenuItem.state = controller.isEnabled ? .on : .off
-        permissionMenuItem.isHidden = !needsAttention
-        switch SMAppService.mainApp.status {
+        permissionMenuItem.isHidden = !needsAttention && (!switcher.isEnabled || controller.isAvailable)
+        altTabMenuItem.state = switcher.isEnabled ? .on : .off
+        altTabMenuItem.title = switcher.isEnabled && !controller.isAvailable
+            ? "启用 Alt+Tab 窗口切换（等待辅助功能授权）" : "启用 Alt+Tab 窗口切换"
+        previewsMenuItem.state = switcher.previewsEnabled ? .on : .off
+        previewsMenuItem.isEnabled = switcher.isEnabled
+        switch switcher.previews.status {
+        case .needsPermission: previewsMenuItem.title = "显示窗口预览（需要授权）"
+        case .unsupported: previewsMenuItem.title = "显示窗口预览（需 macOS 26 或更新版本）"
+        case .paused: previewsMenuItem.title = "显示窗口预览（截图暂时暂停）"
+        default: previewsMenuItem.title = "显示窗口预览"
+        }
+        screenPermissionMenuItem.isHidden = switcher.previews.status != .needsPermission
+        switch startupStatus {
         case .enabled:
             startupMenuItem.state = .on
             startupMenuItem.title = "登录时启动"
@@ -188,8 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "让 Ctrl 快捷键生效"
-        alert.informativeText = "请在系统设置打开的权限列表中开启「CtrlSwitch.app」。\n\n只处理 Ctrl+C / V / S / A / X / F / Z，按键位置保持原样。授权后自动生效。\n\n如果列表中没有本程序，点「＋」选择「应用程序」里的 CtrlSwitch.app。"
+        alert.messageText = "允许使用快捷键与窗口切换"
+        alert.informativeText = "请在系统设置打开的权限列表中开启「CtrlSwitch.app」。\n\n用于七组 Ctrl 快捷键转换与 Alt+Tab 窗口切换，按键位置保持原样。\n\n更新后仍提示未授权时，请先用「－」移除旧记录，再用「＋」重新添加「应用程序」里的 CtrlSwitch.app。"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "打开辅助功能设置")
         alert.addButton(withTitle: "稍后")
@@ -203,6 +280,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSWorkspace.shared.open(url)
         }
         controller.reconcile()
+    }
+
+    @objc private func toggleAltTab() {
+        switcher.setEnabled(!switcher.isEnabled)
+        defaults.set(switcher.isEnabled, forKey: "altTabEnabled")
+        controller.switcherEnabled = switcher.isEnabled
+        if switcher.isEnabled, !AXIsProcessTrusted() { showPermissionHelp() }
+    }
+
+    @objc private func toggleWindowPreviews() {
+        switcher.setPreviewsEnabled(!switcher.previewsEnabled)
+        defaults.set(switcher.previewsEnabled, forKey: "windowPreviewsEnabled")
+        if switcher.previewsEnabled, switcher.previews.status == .needsPermission { openScreenRecordingSettings() }
+    }
+
+    @objc private func openScreenRecordingSettings() {
+        _ = CGRequestScreenCaptureAccess()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+        switcher.previews.refreshPermission()
+    }
+
+    private func installReadOnlyDiagnostics() {
+        diagnosticObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.ctrlswitch.statusRequest"), object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self, let request = notification.userInfo?["request"] as? String,
+                  UUID(uuidString: request) != nil,
+                  let data = try? JSONSerialization.data(withJSONObject: self.diagnosticValues(), options: [.sortedKeys]),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("local.ctrlswitch.statusResponse"), object: request,
+                userInfo: ["json": json], deliverImmediately: true)
+        }
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -225,7 +337,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.addButton(withTitle: "知道了")
             alert.runModal()
         }
+        startupStatus = SMAppService.mainApp.status
         updateAppearance()
+    }
+
+    private func diagnosticValues() -> [String: Any] {
+        var values: [String: Any] = [
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            "accessibilityGranted": AXIsProcessTrusted(), "keyboardTapActive": controller.isAvailable,
+            "ctrlEnabled": controller.isEnabled, "altTabEnabled": switcher.isEnabled,
+            "previewsEnabled": switcher.previewsEnabled, "previewStatus": switcher.previews.status.rawValue,
+            "windowCount": switcher.inventory.windows.count, "panelVisible": switcher.isPanelVisible,
+            "cachedImages": switcher.previews.cachedCount, "cachedBytes": switcher.previews.cachedBytes,
+            "captureInFlight": switcher.previews.hasInFlightRequest,
+            "completedCaptures": switcher.previews.completedCaptures, "failedCaptures": switcher.previews.failedCaptures,
+            "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches
+        ]
+        var memory = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &memory) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        if result == KERN_SUCCESS { values["physicalFootprintBytes"] = memory.phys_footprint }
+        if let exerciseResult { values["exercise"] = exerciseResult }
+        return values
+    }
+
+    private func scheduleExercise(attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            if self.switcher.inventory.windows.isEmpty, attempt < 20 {
+                self.scheduleExercise(attempt: attempt + 1)
+                return
+            }
+            self.switcher.exercise(cycles: 500) { [weak self] result in
+                self?.exerciseResult = result
+            }
+        }
     }
 
     @objc private func quitApp() { NSApp.terminate(nil) }

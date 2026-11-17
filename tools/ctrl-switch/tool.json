@@ -1,7 +1,7 @@
 {
   "id": "ctrl-switch",
   "name": "TianCai快捷键开关",
-  "description": "在菜单栏一键切换七组 Windows 常用 Ctrl 快捷键与 Mac 原生操作",
+  "description": "菜单栏切换七组 Ctrl 快捷键，提供原生 Alt+Tab 窗口切换与按需预览",
   "type": "swift-macos",
   "project": "Resources/Info.plist",
   "executable": "CtrlSwitch.app"
