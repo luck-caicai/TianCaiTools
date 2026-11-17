@@ -13,6 +13,8 @@ final class WindowSwitcherController {
     private(set) var previewsEnabled: Bool
     private(set) var committedSwitches = 0
     private(set) var confirmedSwitches = 0
+    private(set) var arrowSelections = 0
+    private(set) var hoverSelections = 0
     var onChanged: (() -> Void)?
     var onKeyReleasesDrained: (() -> Void)?
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
@@ -34,6 +36,13 @@ final class WindowSwitcherController {
             guard let self, self.selection?.ids.contains(id) == true else { return }
             self.keys.cancel()
             self.finish(target: id)
+        }
+        panel.onHover = { [weak self] id in
+            guard let self, self.panel.isVisible, self.selection?.ids.contains(id) == true,
+                  self.selection?.selectedID != id else { return }
+            self.selection?.select(id)
+            self.hoverSelections += 1
+            self.render()
         }
         inventory.onFocusResult = { [weak self] success in
             if success { self?.confirmedSwitches += 1 }
@@ -71,7 +80,7 @@ final class WindowSwitcherController {
     func handle(type: CGEventType, event: CGEvent) -> Bool {
         let result = keys.handle(type, key: CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)),
             flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
-            canBegin: !ordered.isEmpty && keyboardAvailable)
+            canBegin: !ordered.isEmpty && keyboardAvailable, canNavigate: panel.isVisible)
         if let action = result.action {
             DispatchQueue.main.async { [weak self] in self?.perform(action) }
         }
@@ -106,7 +115,15 @@ final class WindowSwitcherController {
             showWork?.cancel(); showWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         case .cycle(let reverse):
+            panel.keyboardSelectionChanged()
             selection?.cycle(reverse: reverse)
+            renderIfVisible()
+        case .navigate(let direction):
+            guard panel.isVisible else { return }
+            panel.keyboardSelectionChanged()
+            let previous = selection?.selectedID
+            selection?.move(direction, columns: panel.columnCount)
+            if selection?.selectedID != previous { arrowSelections += 1 }
             renderIfVisible()
         case .commit:
             finish(target: selection?.selectedID)
@@ -164,7 +181,13 @@ final class WindowSwitcherController {
         var remaining = cycles
         let timer = Timer(timeInterval: 0.016, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
-            self.selection?.cycle(reverse: remaining % 3 == 0)
+            if remaining % 5 == 0 {
+                self.selection?.cycle(reverse: remaining % 3 == 0)
+            } else {
+                self.panel.keyboardSelectionChanged()
+                let direction = SelectionDirection.allCases[remaining % 4]
+                self.selection?.move(direction, columns: self.panel.columnCount)
+            }
             self.render()
             remaining -= 1
             if remaining <= 0 {

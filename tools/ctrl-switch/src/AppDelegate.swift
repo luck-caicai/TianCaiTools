@@ -351,7 +351,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "cachedImages": switcher.previews.cachedCount, "cachedBytes": switcher.previews.cachedBytes,
             "captureInFlight": switcher.previews.hasInFlightRequest,
             "completedCaptures": switcher.previews.completedCaptures, "failedCaptures": switcher.previews.failedCaptures,
-            "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches
+            "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches,
+            "arrowSelections": switcher.arrowSelections, "hoverSelections": switcher.hoverSelections
         ]
         var memory = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)

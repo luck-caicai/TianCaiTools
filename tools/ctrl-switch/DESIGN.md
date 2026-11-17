@@ -7,6 +7,7 @@
 - `EventTapController` 为两项功能共用一个键盘事件入口，监听按下、松开和修饰键变化。只吞掉已匹配的 Tab/Esc 事件，不重映射 Ctrl、Command 或 Option。
 - `WindowInventory` 在串行后台队列进行 AX 查询，通过应用及窗口通知刷新；激活使用单独队列，避免等待窗口扫描。AX 调用有短超时与每个应用的扫描时间预算。
 - `WindowSwitcherController` 管理一次选择会话、150 毫秒面板延迟和窗口激活。快捷切换不启动截图。
+- 面板显示后四个方向键按当前网格选择，所有接管的松开事件保持配对。鼠标悬停使用卡片局部的 NSTrackingArea；比较真实指针位置，忽略静止鼠标引起的初次进入或重建事件。键盘选择重新设置指针基准，避免键鼠交替时回跳。
 - `SwitcherPanel` 使用非激活 NSPanel、少量 AppKit 视图和 CALayer 展示卡片，取消时不改变前台焦点。
 - `WindowPreviewProvider` 负责单次截图、全局单请求、后台小位图复制、会话隔离与有上限的短期缓存。
 

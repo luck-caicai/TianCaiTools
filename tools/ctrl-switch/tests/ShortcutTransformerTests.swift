@@ -120,6 +120,7 @@ struct ShortcutTransformerTests {
         check(transformer.mappedKeysDown.isEmpty, "session reset clears held shortcuts")
         check(send(&transformer, .keyUp, 6, []) == nil, "no stale mapping after reset")
         SwitcherStateTests.run { condition, message in check(condition, message) }
+        PreviewNavigationTests.run { condition, message in check(condition, message) }
         writeReport(failed: 0)
         print("PASS: \(assertions) assertions; Ctrl mappings, terminal exclusions, Alt+Tab selection, key releases, preview budget and timeout admission.")
     }

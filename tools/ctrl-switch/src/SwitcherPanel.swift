@@ -10,7 +10,9 @@ private final class WindowCard: NSView {
     private let picture = CALayer()
     private let placeholder = NSImageView()
     private let stateLabel = NSTextField(labelWithString: "")
+    private var hoverArea: NSTrackingArea?
     var onClick: ((String) -> Void)?
+    var onHover: ((String) -> Void)?
 
     init(window: SwitchableWindow, icon: NSImage?, frame: NSRect) {
         id = window.id
@@ -60,6 +62,16 @@ private final class WindowCard: NSView {
     required init?(coder: NSCoder) { fatalError("Programmatic view") }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?(id) }
+    override func updateTrackingAreas() {
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        super.updateTrackingAreas()
+        let area = NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(id) }
+    override func mouseMoved(with event: NSEvent) { onHover?(id) }
     func setSelected(_ selected: Bool) {
         layer?.backgroundColor = (selected ? NSColor.controlAccentColor.withAlphaComponent(0.13) : .clear).cgColor
         layer?.borderColor = (selected ? NSColor.controlAccentColor : .clear).cgColor
@@ -78,8 +90,12 @@ final class SwitcherPanel {
     private var footer: NSTextField?
     private var countLabel: NSTextField?
     private var lastVisibleIDs: [String] = []
+    private var lastColumns = 0
     private var icons: [pid_t: NSImage] = [:]
+    private var hover = HoverSelectionState()
     var onChoose: ((String) -> Void)?
+    var onHover: ((String) -> Void)?
+    private(set) var columnCount = 1
     var isVisible: Bool { panel?.isVisible == true }
     var visibleIDs: [String] { lastVisibleIDs }
 
@@ -90,6 +106,8 @@ final class SwitcherPanel {
         let available = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1280, height: 800)
         let width: CGFloat = 210, height: CGFloat = 181, gap: CGFloat = 10, padding: CGFloat = 18
         let columns = min(windows.count, max(1, min(4, Int((available.width - padding * 2 + gap) / (width + gap)))))
+        columnCount = columns
+        if !isVisible { hover.rebase(at: NSEvent.mouseLocation) }
         let maxRows = max(1, min(2, Int((available.height - 100) / (height + gap))))
         let capacity = columns * maxRows
         let selected = selectedID.flatMap { id in windows.firstIndex { $0.id == id } } ?? 0
@@ -110,6 +128,7 @@ final class SwitcherPanel {
             hud.hasShadow = true
             hud.hidesOnDeactivate = false
             hud.animationBehavior = .none
+            hud.acceptsMouseMovedEvents = true
             let content = NSVisualEffectView(frame: CGRect(origin: .zero, size: panelSize))
             content.material = .hudWindow
             content.blendingMode = .behindWindow
@@ -122,7 +141,7 @@ final class SwitcherPanel {
             panel = hud
         }
         guard let panel, let root else { return }
-        if ids != lastVisibleIDs {
+        if ids != lastVisibleIDs || columns != lastColumns || root.frame.size != panelSize {
             clearCardImages()
             root.subviews.forEach { $0.removeFromSuperview() }
             cards.removeAll()
@@ -139,6 +158,7 @@ final class SwitcherPanel {
                 }
                 let card = WindowCard(window: window, icon: icon, frame: frame)
                 card.onClick = { [weak self] id in self?.onChoose?(id) }
+                card.onHover = { [weak self] id in self?.hovered(id) }
                 root.addSubview(card)
                 cards[window.id] = card
             }
@@ -156,12 +176,13 @@ final class SwitcherPanel {
             root.addSubview(count)
             countLabel = count
             lastVisibleIDs = ids
+            lastColumns = columns
         }
         let hint: String
         switch previewStatus {
         case .needsPermission: hint = "右键菜单允许屏幕录制后可显示预览"
         case .paused: hint = "预览暂时暂停，窗口切换仍可使用"
-        default: hint = "Tab 下一窗口 · Shift 反向 · 松开 Alt 切换 · Esc 取消"
+        default: hint = "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消"
         }
         footer?.stringValue = hint
         countLabel?.stringValue = "\(selected + 1) / \(windows.count)"
@@ -176,6 +197,11 @@ final class SwitcherPanel {
     }
 
     func setImage(_ image: CGImage, for id: String) { cards[id]?.setImage(image) }
+    func keyboardSelectionChanged() { hover.rebase(at: NSEvent.mouseLocation) }
+    private func hovered(_ id: String) {
+        guard isVisible, cards[id] != nil, hover.moved(to: NSEvent.mouseLocation) else { return }
+        onHover?(id)
+    }
     func evict(_ ids: Set<String>) { ids.forEach { cards[$0]?.setImage(nil) } }
     func clearCardImages() { cards.values.forEach { $0.setImage(nil) } }
     func hide() {
@@ -183,6 +209,9 @@ final class SwitcherPanel {
         clearCardImages()
         root?.subviews.forEach { $0.removeFromSuperview() }
         cards.removeAll(); lastVisibleIDs.removeAll(); footer = nil; countLabel = nil
+        hover.reset()
+        columnCount = 1
+        lastColumns = 0
     }
     func releaseResources() {
         hide()
