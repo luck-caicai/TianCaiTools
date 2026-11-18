@@ -48,10 +48,12 @@ import ApplicationServices
             }
             panel.onClose = { id in
                 panel.hide()
-                let report: [String: Any] = ["closed": id, "panelVisible": panel.isVisible,
-                    "surfaceCount": panel.visibleSurfaceCount]
-                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
-                    try? data.write(to: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-close-report.json"))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let report: [String: Any] = ["closed": id, "panelVisible": panel.isVisible,
+                        "surfaceCount": panel.visibleSurfaceCount]
+                    if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                        try? data.write(to: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-close-report.json"))
+                    }
                 }
             }
         }

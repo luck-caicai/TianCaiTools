@@ -37,6 +37,8 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard let id = sender.identifier?.rawValue, id == "C", !approved.contains(id) else { return true }
         guard sender.attachedSheet == nil else { return false }
+        // Reproduce the app-side delay that can outlive a client's AX reply timeout.
+        Thread.sleep(forTimeInterval: 0.35)
         events.append("confirmationPresented")
         let alert = NSAlert()
         alert.messageText = "未保存的测试文稿"
