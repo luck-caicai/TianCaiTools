@@ -5,12 +5,14 @@ import ApplicationServices
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        let output = CommandLine.arguments.dropFirst().first
+            ?? Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-fixture.png").path
         let panel = SwitcherPanel()
         let names = ["文稿 · 项目说明", "浏览器 · 工作页面", "终端 · 开发日志", "编辑器 · main.swift", "文件 · 下载", "文稿 · 设计草案"]
         let windows = names.enumerated().map { index, name in
             SwitchableWindow(id: "fixture-\(index)", windowID: nil, pid: getpid(),
                 applicationName: name.components(separatedBy: " · ").first!, title: name,
-                frame: CGRect(x: 0, y: 0, width: 800, height: 600), minimized: index == 4,
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600), minimized: index == 4, fullscreen: index == 1,
                 element: AXUIElementCreateApplication(getpid()))
         }
         let image = NSImage(size: NSSize(width: 480, height: 300))
@@ -26,9 +28,61 @@ import ApplicationServices
         image.unlockFocus()
         var frame = CGRect(x: 0, y: 0, width: 480, height: 300)
         let bitmap = image.cgImage(forProposedRect: &frame, context: nil, hints: nil)!
+        let lifecycle = CommandLine.arguments.contains("--lifecycle")
+        let interactive = CommandLine.arguments.contains("--interactive")
+            || Bundle.main.object(forInfoDictionaryKey: "PanelFixtureInteractive") as? Bool == true
+        if interactive {
+            panel.onChoose = { id in
+                panel.hide()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+                    let own = rows.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid() }
+                    let report: [String: Any] = ["clicked": id, "panelVisible": panel.isVisible,
+                        "onscreenOwnWindows": own.count,
+                        "visibleAppWindows": app.windows.filter(\.isVisible).count]
+                    if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                        try? data.write(to: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-click-report.json"))
+                    }
+                }
+            }
+        }
         panel.show(windows: windows, selectedID: "fixture-2", previewStatus: .ready, image: { _ in bitmap })
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            do { try panel.snapshotPNG()?.write(to: URL(fileURLWithPath: CommandLine.arguments[1])) }
+        if lifecycle {
+            var chosen: [String] = []
+            var checks: [String: Bool] = [:]
+            panel.onChoose = { id in chosen.append(id); panel.hide() }
+            checks["firstActionQueued"] = panel.chooseForFixture("fixture-0")
+            panel.hide()
+            panel.show(windows: windows, selectedID: "fixture-2", previewStatus: .ready, image: { _ in bitmap })
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                checks["oldClickCannotChooseNewSession"] = chosen.isEmpty && panel.isVisible
+                checks["newActionQueued"] = panel.chooseForFixture("fixture-1")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    checks["chosenExactlyOnce"] = chosen == ["fixture-1"]
+                    checks["closedAfterChoose"] = !panel.isVisible && panel.visibleSurfaceCount == 0
+                    panel.show(windows: windows, selectedID: "fixture-3", previewStatus: .ready, image: { _ in bitmap })
+                    checks["reopened"] = panel.isVisible && panel.visibleIDs.count == windows.count
+                    panel.hide()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        checks["closedAfterCancel"] = !panel.isVisible && panel.visibleSurfaceCount == 0
+                        let passed = checks.values.allSatisfy { $0 }
+                        let report: [String: Any] = ["passed": passed, "checks": checks,
+                            "scope": "production accessibility action and window lifecycle; no global input or user-window focus"]
+                        do {
+                            let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                            try data.write(to: URL(fileURLWithPath: output))
+                            print(String(decoding: data, as: UTF8.self))
+                        } catch { print(error); exit(1) }
+                        panel.releaseResources()
+                        exit(passed ? 0 : 1)
+                    }
+                }
+            }
+            app.run()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (interactive ? 600 : 0.5)) {
+            do { try panel.snapshotPNG()?.write(to: URL(fileURLWithPath: output)) }
             catch { print(error); exit(1) }
             panel.releaseResources()
             exit(0)

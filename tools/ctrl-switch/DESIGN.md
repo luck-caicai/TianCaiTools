@@ -7,6 +7,8 @@
 - `EventTapController` 为两项功能共用一个键盘事件入口，监听按下、松开和修饰键变化。只吞掉已匹配的 Tab/Esc 事件，不重映射 Ctrl、Command 或 Option。
 - `WindowInventory` 在串行后台队列进行 AX 查询，通过应用及窗口通知刷新；激活使用单独队列，避免等待窗口扫描。AX 调用有短超时与每个应用的扫描时间预算。
 - `WindowSwitcherController` 管理一次选择会话、150 毫秒面板延迟和窗口激活。快捷切换不启动截图。
+- 面板显示后四个方向键按当前网格选择，所有接管的松开事件保持配对。鼠标悬停使用卡片局部的 NSTrackingArea；比较真实指针位置，忽略静止鼠标引起的初次进入或重建事件。键盘选择重新设置指针基准，避免键鼠交替时回跳。
+- 鼠标高亮与键盘确认目标分离。悬停后松开 Alt 会取消并保留原焦点，只有单击才激活悬停窗口；使用方向键或 Tab 重新选择后恢复松开 Alt 确认。
 - `SwitcherPanel` 使用非激活 NSPanel、少量 AppKit 视图和 CALayer 展示卡片，取消时不改变前台焦点。
 - `WindowPreviewProvider` 负责单次截图、全局单请求、后台小位图复制、会话隔离与有上限的短期缓存。
 
@@ -24,11 +26,17 @@ macOS 26+ 使用公开 ScreenCaptureKit 的 `SCScreenshotManager.captureScreensh
 
 通过 AX 获得可切换窗口，通过 CGWindowID 与 ScreenCaptureKit 窗口关联。使用动态查找的 `_AXUIElementGetWindow` 作为小型可选身份桥接；它是未公开的系统符号，缺失时只采用唯一匹配的公开 CG 窗口元数据，无法可靠关联时显示图标。截图后端不使用私有 SkyLight API。
 
-普通窗口只显示系统报告为在屏幕上的窗口；系统可枚举的最小化窗口也加入。AX 不提供最小化窗口的桌面归属，激活时桌面切换遵循 macOS 的设置。全屏、跨桌面与复杂多显示器情况尚未完整验证。旧 macOS 保留图标模式，不承诺未经实测的截图兼容性。
+AX 中仍存活的普通窗口、最小化及全屏窗口都加入，不用 CG 的 `isOnscreen` 过滤；该字段只能说明当前可见性，不能用来判断其他桌面窗口是否存在。AXWindows 自身也可能只提供当前桌面的窗口，因此候选合并主窗口、焦点窗口和已见过的 AX 节点，再逐一检查节点是否存活、角色和尺寸是否有效。去重后最多 160 个，仍受每个应用 1 秒扫描预算约束。卡片使用 `AXFullScreen` 显示状态，桌面切换通知仍触发清单刷新。
+
+跨桌面激活通过可选、动态解析的 `_SLPSSetFrontProcessWithOptions` 请求指定 CGWindowID，并使用 AX 设置主窗口、焦点和 Raise。缺失或调用失败时退回公开的应用激活。Space 动画后以有限次数检查应用前台、AX 焦点和目标可见性；目标确实可见且应用在前台后，最多发送一次 `SLPSPostEventRecordTo` 的 make-key 按下/松开对，再检查焦点。记录直接面向目标进程和窗口，两个坐标字段均在窗口内容外；256 字节缓冲区包含系统可能读取的尾部填充，两个边沿保持配对，不移动真实鼠标、不向全局事件流发点击、不点击窗口内容。没有窗口搬移、全屏开关或 Mission Control 设置修改。延迟 Raise 仅限目标应用已在前台时执行，不重复请求切换应用。新的激活、打开下一次选择或禁用功能会推进线程安全的代次，旧回调不再操作焦点。
+
+卡片在 mouseUp 确认，并延迟到该 AppKit 事件返回后结束会话。每次关闭都 orderOut 并 close 面板，清空持有引用；下次展示重新创建面板，避免系统点击前置处理重新显示已经清空卡片的旧窗口。每次呈现有代次，旧点击回调不能操作已经关闭或重新打开的面板。运行诊断同时检查 WindowServer 上属于本进程的浮动面板数量，而不只依赖 NSPanel.isVisible。
+
+ScreenCaptureKit 枚举包含其他桌面，但仍只请求当前卡片的缩略图；缺少图像不影响选择，系统无法截取时保留图标。复杂多显示器、分屏和应用特有的焦点行为需要实际验证。旧 macOS 保留图标模式，不承诺未经实测的截图兼容性。
 
 ## 参考
 
-研究了 [AltTab](https://github.com/lwouis/alt-tab-macos) 固定提交 `950c1a4e749aef53637bf2833b4a09328cdbce8e` 的 WindowCaptureEvents、WindowThumbnails、SwitcherSession 和 LightImageLayer。借鉴异步更新、分辨率控制、会话内缓存和真实异步请求限流的设计；本实现独立编写，未引入其源码、素材、运行时或配置系统。
+研究了 [AltTab](https://github.com/lwouis/alt-tab-macos) 固定提交 `950c1a4e749aef53637bf2833b4a09328cdbce8e` 的 WindowCaptureEvents、WindowThumbnails、SwitcherSession、LightImageLayer 及窗口激活路径。借鉴异步更新、分辨率控制、会话内缓存、真实异步请求限流和指定窗口激活的设计；本实现独立编写，未引入其源码、素材、运行时或配置系统。
 
 AltTab 的当前版本已经对全分辨率大图进行按需加载和缓存限制。此工具目前只提供卡片缩略图，以减少对大图和复杂兼容分支的需求。
 
