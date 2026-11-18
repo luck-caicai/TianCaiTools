@@ -264,7 +264,7 @@ final class SwitcherPanel {
         case .needsPermission: hint = "右键菜单允许屏幕录制后可显示预览"
         case .paused: hint = "预览暂时暂停，窗口切换仍可使用"
         default:
-            if keepOpen { hint = "可继续关闭 · 单击 / 回车切换 · Esc 关闭" }
+            if keepOpen { hint = "单击 / 回车切换 · Esc 退出" }
             else { hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
                 : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消" }
         }
