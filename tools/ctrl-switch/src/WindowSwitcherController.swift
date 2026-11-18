@@ -18,6 +18,7 @@ final class WindowSwitcherController {
     private(set) var hoverSelections = 0
     private(set) var closeRequests = 0
     private(set) var acceptedCloseRequests = 0
+    private(set) var unconfirmedCloseRequests = 0
     private(set) var failedCloseRequests = 0
     private(set) var lastCloseResult = "none"
     var onChanged: (() -> Void)?
@@ -66,8 +67,13 @@ final class WindowSwitcherController {
         inventory.onCloseResult = { [weak self] result in
             guard let self else { return }
             self.lastCloseResult = result.rawValue
-            if result == .requested { self.acceptedCloseRequests += 1 }
-            else { self.failedCloseRequests += 1; NSSound.beep() }
+            switch result {
+            case .requested: self.acceptedCloseRequests += 1
+            case .unconfirmed: self.unconfirmedCloseRequests += 1
+            case .stale: self.failedCloseRequests += 1
+            case .unavailable, .failed: self.failedCloseRequests += 1
+            }
+            if result.shouldSignalFailure { NSSound.beep() }
             self.onChanged?()
         }
         previews.configure(enabled: enabled && previewsEnabled)

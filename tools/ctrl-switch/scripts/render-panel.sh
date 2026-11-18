@@ -12,6 +12,7 @@ xcrun swiftc -O -swift-version 5 -D UI_FIXTURE \
     -module-cache-path "$task_root/artifacts/module-cache" \
     "$task_root/src/SwitcherState.swift" "$task_root/src/WindowActivation.swift" "$task_root/src/WindowInventory.swift" \
     "$task_root/src/WindowKeyRecords.swift" \
+    "$task_root/src/WindowCloseState.swift" \
     "$task_root/src/WindowPreviewProvider.swift" "$task_root/src/SwitcherPanel.swift" \
     "$task_root/tests/fixtures/PanelFixture.swift" \
     -framework AppKit -framework ApplicationServices -framework ScreenCaptureKit \

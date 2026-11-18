@@ -15,8 +15,6 @@ struct SwitchableWindow {
     let element: AXUIElement
 }
 
-enum WindowCloseResult: String { case requested, unavailable, stale, failed }
-
 /// All AX queries run off main with an IPC timeout. Nothing is periodically polled while idle.
 final class WindowInventory {
     private struct AppInfo { let pid: pid_t; let name: String }
@@ -298,13 +296,15 @@ final class WindowInventory {
             } else if let button = Self.closeButton(window.element) {
                 AXUIElementSetMessagingTimeout(button, 0.2)
                 if Self.attribute(button, kAXEnabledAttribute) as? Bool == false { result = .unavailable }
-                else { result = AXUIElementPerformAction(button, kAXPressAction as CFString) == .success ? .requested : .failed }
+                else {
+                    result = .fromActionReply(AXUIElementPerformAction(button, kAXPressAction as CFString))
+                }
             } else { result = .unavailable }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.onCloseResult?(result)
                 self.requestRefresh(pid: window.pid)
-                if result == .requested {
+                if result.mayHaveBeenDelivered {
                     self.closeQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                         guard let self, self.focusGeneration.contains(generation),
                               let children = Self.attribute(window.element, kAXChildrenAttribute) as? [AXUIElement] else { return }

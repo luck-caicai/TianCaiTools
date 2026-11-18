@@ -42,6 +42,8 @@ ScreenCaptureKit 枚举包含其他桌面，但仍只请求当前卡片的缩略
 
 关闭后若该窗口出现原生 sheet，则将该窗口及确认界面带到前台，供用户处理；新的选择会取消这次延迟焦点操作。取消保存询问时保留真实窗口，不预测删除。
 
+原应用在显示确认框时可能让 AXPress 超过回复时限。此类不能确认的回复与明确失败分开记录，继续检查原生确认界面及窗口实际状态；既不当作已关闭，也不自动再发一次关闭操作。
+
 ## 参考
 
 研究了 [AltTab](https://github.com/lwouis/alt-tab-macos) 固定提交 `950c1a4e749aef53637bf2833b4a09328cdbce8e` 的 WindowCaptureEvents、WindowThumbnails、SwitcherSession、LightImageLayer 及窗口激活路径。借鉴异步更新、分辨率控制、会话内缓存、真实异步请求限流和指定窗口激活的设计；本实现独立编写，未引入其源码、素材、运行时或配置系统。

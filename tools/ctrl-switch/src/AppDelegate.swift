@@ -364,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches,
             "arrowSelections": switcher.arrowSelections, "hoverSelections": switcher.hoverSelections,
             "closeRequests": switcher.closeRequests, "acceptedCloseRequests": switcher.acceptedCloseRequests,
+            "unconfirmedCloseRequests": switcher.unconfirmedCloseRequests,
             "failedCloseRequests": switcher.failedCloseRequests, "lastCloseResult": switcher.lastCloseResult
         ]
         var memory = task_vm_info_data_t()

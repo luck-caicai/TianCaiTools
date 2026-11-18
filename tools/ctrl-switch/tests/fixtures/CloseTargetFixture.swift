@@ -51,6 +51,12 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
             } else { self.events.append("confirmationCancelled") }
             self.writeReport()
         }
+        // A disconnected UI automation client must not leave the disposable alert up indefinitely.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self, weak sender] in
+            guard let self, let sender, sender.attachedSheet == alert.window else { return }
+            self.events.append("confirmationTimeoutCancelled")
+            alert.buttons.first?.performClick(nil)
+        }
         writeReport()
         return false
     }

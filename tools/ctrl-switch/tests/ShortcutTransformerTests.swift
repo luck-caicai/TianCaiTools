@@ -122,6 +122,7 @@ struct ShortcutTransformerTests {
         SwitcherStateTests.run { condition, message in check(condition, message) }
         PreviewNavigationTests.run { condition, message in check(condition, message) }
         WindowActivationTests.run { condition, message in check(condition, message) }
+        WindowCloseStateTests.run { condition, message in check(condition, message) }
         writeReport(failed: 0)
         print("PASS: \(assertions) assertions; Ctrl mappings, terminal exclusions, Alt+Tab selection, key releases, preview budget and timeout admission.")
     }
