@@ -10,6 +10,7 @@ final class WindowSwitcherController {
     private var showWork: DispatchWorkItem?
     private var keyboardAvailable = false
     private var closeFixturePID: pid_t?
+    private var pendingCloseIDs = Set<String>()
     private(set) var isEnabled: Bool
     private(set) var previewsEnabled: Bool
     private(set) var committedSwitches = 0
@@ -26,6 +27,7 @@ final class WindowSwitcherController {
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
     var isSelecting: Bool { selection != nil }
     var isPanelVisible: Bool { panel.isVisible }
+    var isPanelPinned: Bool { panel.isVisible && keys.isPinned }
     var panelSurfaceCount: Int { panel.visibleSurfaceCount }
 
     init(enabled: Bool, previewsEnabled: Bool) {
@@ -53,10 +55,14 @@ final class WindowSwitcherController {
         }
         panel.onClose = { [weak self] id in
             guard let self, self.selection?.ids.contains(id) == true,
-                  let window = self.inventory.windows[id], window.canClose else { return }
+                  let window = self.inventory.windows[id], window.canClose,
+                  !self.pendingCloseIDs.contains(id) else { return }
             guard self.closeFixturePID == nil || self.closeFixturePID == window.pid else { return }
-            self.keys.cancel()
-            self.finish(target: nil)
+            self.keys.pinAfterClose()
+            self.selection?.select(id)
+            self.selection?.hover(id)
+            self.pendingCloseIDs.insert(id)
+            self.renderIfVisible()
             self.closeRequests += 1
             self.inventory.requestClose(window)
         }
@@ -64,8 +70,9 @@ final class WindowSwitcherController {
             if success { self?.confirmedSwitches += 1 }
             self?.onChanged?()
         }
-        inventory.onCloseResult = { [weak self] result in
+        inventory.onCloseResult = { [weak self] id, result in
             guard let self else { return }
+            self.pendingCloseIDs.remove(id)
             self.lastCloseResult = result.rawValue
             switch result {
             case .requested: self.acceptedCloseRequests += 1
@@ -74,7 +81,13 @@ final class WindowSwitcherController {
             case .unavailable, .failed: self.failedCloseRequests += 1
             }
             if result.shouldSignalFailure { NSSound.beep() }
+            self.renderIfVisible()
             self.onChanged?()
+        }
+        inventory.onCloseConfirmation = { [weak self] id in
+            guard let self, self.selection?.ids.contains(id) == true else { return }
+            // Let the original application's save/cancel sheet receive input unobscured.
+            self.cancel()
         }
         previews.configure(enabled: enabled && previewsEnabled)
     }
@@ -156,7 +169,11 @@ final class WindowSwitcherController {
             if selection?.selectedID != previous { arrowSelections += 1 }
             renderIfVisible()
         case .commit:
+            // A queued Option-release action can predate the close button's deferred callback.
+            guard !keys.isPinned else { return }
             finish(target: selection?.releaseTargetID)
+        case .confirm:
+            finish(target: selection?.highlightedID)
         case .cancel:
             finish(target: nil)
         }
@@ -171,13 +188,14 @@ final class WindowSwitcherController {
         if let window {
             committedSwitches += 1
             inventory.activate(window)
-        }
+        } else { inventory.cancelPendingActivation() }
         onChanged?()
     }
 
     private func inventoryChanged() {
         ordered = inventory.orderedWindows()
         let live = Set(inventory.windows.keys)
+        pendingCloseIDs.formIntersection(live)
         previews.retain(live)
         if selection != nil {
             selection?.retain(live)
@@ -193,6 +211,7 @@ final class WindowSwitcherController {
         let windows = selection.ids.compactMap { inventory.windows[$0] }
         panel.show(windows: windows, selectedID: selection.highlightedID, previewStatus: previews.status,
                    pointerPreview: selection.pointerPreviewActive,
+                   keepOpen: keys.isPinned, closingIDs: pendingCloseIDs,
                    image: { [unowned self] in self.previews.image(for: $0) })
         let visible = panel.visibleIDs.compactMap { inventory.windows[$0] }
         let selected = selection.highlightedID

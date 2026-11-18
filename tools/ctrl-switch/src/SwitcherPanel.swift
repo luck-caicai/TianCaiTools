@@ -166,6 +166,7 @@ final class SwitcherPanel {
 
     func show(windows: [SwitchableWindow], selectedID: String?, previewStatus: WindowPreviewProvider.Status,
               pointerPreview: Bool = false,
+              keepOpen: Bool = false, closingIDs: Set<String> = [],
               image: (String) -> CGImage?) {
         guard !windows.isEmpty else { hide(); return }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
@@ -262,13 +263,15 @@ final class SwitcherPanel {
         switch previewStatus {
         case .needsPermission: hint = "右键菜单允许屏幕录制后可显示预览"
         case .paused: hint = "预览暂时暂停，窗口切换仍可使用"
-        default: hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
-            : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消"
+        default:
+            if keepOpen { hint = "可继续关闭 · 单击 / 回车切换 · Esc 关闭" }
+            else { hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
+                : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消" }
         }
         footer?.stringValue = hint
         countLabel?.stringValue = "\(selected + 1) / \(windows.count)"
         for window in visible {
-            cards[window.id]?.setClosable(window.canClose)
+            cards[window.id]?.setClosable(window.canClose && !closingIDs.contains(window.id))
             cards[window.id]?.setSelected(window.id == selectedID)
             cards[window.id]?.setImage(image(window.id))
         }

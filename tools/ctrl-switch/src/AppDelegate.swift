@@ -363,6 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "completedCaptures": switcher.previews.completedCaptures, "failedCaptures": switcher.previews.failedCaptures,
             "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches,
             "arrowSelections": switcher.arrowSelections, "hoverSelections": switcher.hoverSelections,
+            "panelPinned": switcher.isPanelPinned,
             "closeRequests": switcher.closeRequests, "acceptedCloseRequests": switcher.acceptedCloseRequests,
             "unconfirmedCloseRequests": switcher.unconfirmedCloseRequests,
             "failedCloseRequests": switcher.failedCloseRequests, "lastCloseResult": switcher.lastCloseResult

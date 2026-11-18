@@ -40,7 +40,8 @@ final class WindowInventory {
     private(set) var lastFocusCheck: [String: Any] = [:]
     var onChanged: (() -> Void)?
     var onFocusResult: ((Bool) -> Void)?
-    var onCloseResult: ((WindowCloseResult) -> Void)?
+    var onCloseResult: ((String, WindowCloseResult) -> Void)?
+    var onCloseConfirmation: ((String) -> Void)?
 
     // Optional identity bridge; screenshots themselves use public ScreenCaptureKit.
     // If unavailable, public CG metadata is matched only when unambiguous.
@@ -279,7 +280,7 @@ final class WindowInventory {
 
     func requestClose(_ window: SwitchableWindow) {
         guard isEnabled, let live = windows[window.id], CFEqual(live.element, window.element), window.canClose else {
-            onCloseResult?(.unavailable); return
+            onCloseResult?(window.id, .unavailable); return
         }
         let generation = focusGeneration.advance()
         // One native AX press on this window's own close button. No keyboard shortcut,
@@ -302,7 +303,7 @@ final class WindowInventory {
             } else { result = .unavailable }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.onCloseResult?(result)
+                self.onCloseResult?(window.id, result)
                 self.requestRefresh(pid: window.pid)
                 if result.mayHaveBeenDelivered {
                     self.closeQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
@@ -321,6 +322,7 @@ final class WindowInventory {
                             guard let self, self.focusGeneration.contains(generation) else { return }
                             // Bring a native save/confirmation sheet into view; a newer user choice
                             // cancels this focus intent. We never answer the sheet for the user.
+                            self.onCloseConfirmation?(window.id)
                             self.activate(window)
                         }
                     }

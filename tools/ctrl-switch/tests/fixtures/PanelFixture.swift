@@ -32,6 +32,7 @@ import ApplicationServices
         let lifecycle = CommandLine.arguments.contains("--lifecycle")
         let interactive = CommandLine.arguments.contains("--interactive")
             || Bundle.main.object(forInfoDictionaryKey: "PanelFixtureInteractive") as? Bool == true
+        var remainingWindows = windows
         if interactive {
             panel.onChoose = { id in
                 panel.hide()
@@ -47,10 +48,12 @@ import ApplicationServices
                 }
             }
             panel.onClose = { id in
-                panel.hide()
+                remainingWindows.removeAll { $0.id == id }
+                panel.show(windows: remainingWindows, selectedID: remainingWindows.first?.id, previewStatus: .ready,
+                    keepOpen: true, image: { _ in bitmap })
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     let report: [String: Any] = ["closed": id, "panelVisible": panel.isVisible,
-                        "surfaceCount": panel.visibleSurfaceCount]
+                        "remaining": panel.visibleIDs, "surfaceCount": panel.visibleSurfaceCount]
                     if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
                         try? data.write(to: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-close-report.json"))
                     }
@@ -63,7 +66,12 @@ import ApplicationServices
             var closed: [String] = []
             var checks: [String: Bool] = [:]
             panel.onChoose = { id in chosen.append(id); panel.hide() }
-            panel.onClose = { id in closed.append(id); panel.hide() }
+            panel.onClose = { id in
+                closed.append(id)
+                remainingWindows.removeAll { $0.id == id }
+                panel.show(windows: remainingWindows, selectedID: remainingWindows.first?.id, previewStatus: .ready,
+                    keepOpen: true, image: { _ in bitmap })
+            }
             func finish() {
                 let passed = checks.values.allSatisfy { $0 }
                 let report: [String: Any] = ["passed": passed, "checks": checks,
@@ -102,8 +110,23 @@ import ApplicationServices
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 checks["closeTargetsExactCard"] = closed == ["fixture-2"]
                                 checks["closeDoesNotChoose"] = chosen == ["fixture-1"]
-                                checks["closedAfterCloseAction"] = !panel.isVisible && panel.visibleSurfaceCount == 0
-                                finish()
+                                checks["closeKeepsPanelOpen"] = panel.isVisible && panel.visibleSurfaceCount == 1
+                                checks["closedCardRemoved"] = !panel.visibleIDs.contains("fixture-2") && panel.visibleIDs.count == windows.count - 1
+                                checks["secondCloseQueued"] = panel.closeForFixture("fixture-3")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    checks["canCloseAgainWithoutReopening"] = closed == ["fixture-2", "fixture-3"] && panel.isVisible
+                                    checks["remainingCardsStillSelectable"] = panel.chooseForFixture("fixture-0")
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                        checks["chooseAfterCloseDismissesCleanly"] = chosen == ["fixture-1", "fixture-0"] && !panel.isVisible && panel.visibleSurfaceCount == 0
+                                        remainingWindows = windows.filter { $0.id == "fixture-4" }
+                                        panel.show(windows: remainingWindows, selectedID: "fixture-4", previewStatus: .ready, keepOpen: true, image: { _ in bitmap })
+                                        checks["lastCloseQueued"] = panel.closeForFixture("fixture-4")
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                            checks["lastCloseDismissesCleanly"] = closed.last == "fixture-4" && !panel.isVisible && panel.visibleSurfaceCount == 0
+                                            finish()
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

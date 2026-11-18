@@ -6,6 +6,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     private var closed = Set<String>()
     private var approved = Set<String>()
     private var events: [String] = []
+    private let confirmationEnabled = !CommandLine.arguments.contains("--plain")
     private let report = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("close-target-report.json")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,7 +36,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard let id = sender.identifier?.rawValue, id == "C", !approved.contains(id) else { return true }
+        guard confirmationEnabled, let id = sender.identifier?.rawValue, id == "C", !approved.contains(id) else { return true }
         guard sender.attachedSheet == nil else { return false }
         // Reproduce the app-side delay that can outlive a client's AX reply timeout.
         Thread.sleep(forTimeInterval: 0.35)
@@ -70,7 +71,8 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     }
 
     private func writeReport() {
-        let value: [String: Any] = ["closed": closed.sorted(), "alive": ["A", "B", "C"].filter { !closed.contains($0) },
+        let value: [String: Any] = ["confirmationEnabled": confirmationEnabled,
+            "closed": closed.sorted(), "alive": ["A", "B", "C"].filter { !closed.contains($0) },
             "events": events, "pid": getpid()]
         if let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: report, options: .atomic)
