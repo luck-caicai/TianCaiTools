@@ -350,6 +350,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "windowCount": switcher.inventory.windows.count,
             "fullscreenWindowCount": switcher.inventory.windows.values.filter(\.fullscreen).count,
             "targetedActivationAvailable": WindowActivation.isAvailable, "panelVisible": switcher.isPanelVisible,
+            "targetedKeyFocusAvailable": WindowActivation.canMakeKey,
+            "panelSurfaceCount": switcher.panelSurfaceCount,
+            "windowSources": switcher.inventory.appWindowSources.values.sorted {
+                ($0["pid"] as? pid_t ?? 0) < ($1["pid"] as? pid_t ?? 0)
+            },
+            "lastFocusCheck": switcher.inventory.lastFocusCheck,
             "cachedImages": switcher.previews.cachedCount, "cachedBytes": switcher.previews.cachedBytes,
             "captureInFlight": switcher.previews.hasInFlightRequest,
             "completedCaptures": switcher.previews.completedCaptures, "failedCaptures": switcher.previews.failedCaptures,

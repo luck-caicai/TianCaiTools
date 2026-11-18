@@ -3,6 +3,20 @@ import Foundation
 
 enum SelectionDirection: CaseIterable { case left, right, up, down }
 
+/// Some apps publish only current-Space windows in AXWindows. Key/main and previously observed
+/// elements remain candidates, but the inventory must still validate each element's live role.
+enum WindowCandidates {
+    static func merge<Element>(published: [Element], focused: Element?, main: Element?, previous: [Element],
+                               equal: (Element, Element) -> Bool) -> [Element] {
+        var result: [Element] = []
+        for element in [focused, main].compactMap({ $0 }) + published + previous {
+            if !result.contains(where: { equal($0, element) }) { result.append(element) }
+            if result.count == 160 { break }
+        }
+        return result
+    }
+}
+
 /// Shared by main and the AX worker. A delayed attempt must never re-focus an older selection.
 final class WindowFocusGeneration {
     private let lock = NSLock()

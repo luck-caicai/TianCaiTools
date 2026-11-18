@@ -20,6 +20,7 @@ final class WindowSwitcherController {
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
     var isSelecting: Bool { selection != nil }
     var isPanelVisible: Bool { panel.isVisible }
+    var panelSurfaceCount: Int { panel.visibleSurfaceCount }
 
     init(enabled: Bool, previewsEnabled: Bool) {
         isEnabled = enabled

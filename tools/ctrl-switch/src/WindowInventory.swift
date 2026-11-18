@@ -34,6 +34,8 @@ final class WindowInventory {
     private(set) var isEnabled = false
     private(set) var windows: [String: SwitchableWindow] = [:]
     private(set) var focusedID: String?
+    private(set) var appWindowSources: [pid_t: [String: Any]] = [:]
+    private(set) var lastFocusCheck: [String: Any] = [:]
     var onChanged: (() -> Void)?
     var onFocusResult: ((Bool) -> Void)?
 
@@ -74,6 +76,7 @@ final class WindowInventory {
             refreshWork?.cancel(); refreshWork = nil
             pendingPids.removeAll(); pendingFullScan = false; pendingFocusPID = nil
             windows.removeAll(); focusedID = nil; recency = WindowRecency(); zOrder.removeAll()
+            appWindowSources.removeAll(); lastFocusCheck.removeAll()
             queryQueue.async { [self] in
                 for observer in observers.values {
                     CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
@@ -129,10 +132,12 @@ final class WindowInventory {
             }
             let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
             var discovered: [SwitchableWindow] = []
+            var sources: [pid_t: [String: Any]] = [:]
             var focused: String?
             for app in chosen {
                 let found = readWindows(app, rows: rows)
                 discovered.append(contentsOf: found.windows)
+                sources[app.pid] = found.source
                 if app.pid == focusPID { focused = found.focused }
             }
             let order = rows.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value }
@@ -143,6 +148,8 @@ final class WindowInventory {
                     return
                 }
                 let replaced = Set(chosen.map(\.pid))
+                appWindowSources = appWindowSources.filter { livePids.contains($0.key) && !replaced.contains($0.key) }
+                sources.forEach { appWindowSources[$0.key] = $0.value }
                 windows = windows.filter { livePids.contains($0.value.pid) && !replaced.contains($0.value.pid) }
                 for window in discovered { windows[window.id] = window }
                 zOrder = order
@@ -156,13 +163,21 @@ final class WindowInventory {
         }
     }
 
-    private func readWindows(_ app: AppInfo, rows: [[String: Any]]) -> (windows: [SwitchableWindow], focused: String?) {
+    private func readWindows(_ app: AppInfo, rows: [[String: Any]])
+        -> (windows: [SwitchableWindow], focused: String?, source: [String: Any]) {
         let axApp = AXUIElementCreateApplication(app.pid)
         AXUIElementSetMessagingTimeout(axApp, 0.12)
         let observer = observerForApp(app.pid, axApp)
-        guard let elements = Self.attribute(axApp, kAXWindowsAttribute) as? [AXUIElement] else { return ([], nil) }
+        let published = Self.attribute(axApp, kAXWindowsAttribute) as? [AXUIElement] ?? []
         let focusedElement = Self.attribute(axApp, kAXFocusedWindowAttribute)
+        let mainElement = Self.attribute(axApp, kAXMainWindowAttribute)
         let old = previousElements[app.pid] ?? []
+        func windowElement(_ value: CFTypeRef?) -> AXUIElement? {
+            guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+            return (value as! AXUIElement)
+        }
+        let elements = WindowCandidates.merge(published: published, focused: windowElement(focusedElement),
+            main: windowElement(mainElement), previous: old.map(\.0), equal: { CFEqual($0, $1) })
         var tracked: [(AXUIElement, String)] = []
         var result: [SwitchableWindow] = []
         var focused: String?
@@ -197,7 +212,10 @@ final class WindowInventory {
             }
         }
         previousElements[app.pid] = tracked
-        return (result, focused)
+        return (result, focused, ["pid": app.pid, "published": published.count,
+            "hasFocused": focusedElement != nil, "hasMain": mainElement != nil,
+            "candidates": elements.count, "accepted": result.count,
+            "fullscreen": result.filter(\.fullscreen).count])
     }
 
     private func observerForApp(_ pid: pid_t, _ app: AXUIElement) -> AXObserver? {
@@ -264,8 +282,9 @@ final class WindowInventory {
         _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
     }
 
-    private func verifyFocus(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64, attempt: Int) {
-        focusQueue.asyncAfter(deadline: .now() + (attempt == 0 ? 0.2 : 0.4)) { [weak self] in
+    private func verifyFocus(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64,
+                             attempt: Int, keySent: Bool = false, keyAccepted: Bool? = nil) {
+        focusQueue.asyncAfter(deadline: .now() + (attempt == 0 ? 0.25 : 0.5)) { [weak self] in
             guard let self, self.focusGeneration.contains(generation) else { return }
             let focused = Self.attribute(app, kAXFocusedWindowAttribute)
             let matched = focused.map { CFEqual($0, window.element) } ?? false
@@ -276,14 +295,28 @@ final class WindowInventory {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.focusGeneration.contains(generation) else { return }
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == window.pid
-                if matched && visible && front {
+                self.lastFocusCheck = ["pid": window.pid, "attempt": attempt, "exactWindow": matched,
+                    "visible": visible, "frontmost": front, "keySent": keySent,
+                    "keyAccepted": keyAccepted.map { $0 as Any } ?? NSNull()]
+                if visible && front && !keySent && window.windowID != nil && WindowActivation.canMakeKey {
+                    // A key request sent before a fullscreen Space finishes appearing can be dropped.
+                    // Send one paired process-targeted record only once the target is visible/front.
+                    self.focusQueue.async { [weak self] in
+                        guard let self, self.focusGeneration.contains(generation) else { return }
+                        let accepted = WindowActivation.makeKey(pid: window.pid, windowID: window.windowID)
+                        self.raise(window, app: app, generation: generation)
+                        self.verifyFocus(window, app: app, generation: generation, attempt: attempt + 1,
+                            keySent: true, keyAccepted: accepted)
+                    }
+                } else if matched && visible && front {
                     self.requestRefresh(pid: window.pid, focusPID: window.pid)
                     self.onFocusResult?(true)
-                } else if attempt < 3 {
+                } else if attempt < 4 {
                     self.focusQueue.async { [weak self] in
                         guard let self, self.focusGeneration.contains(generation) else { return }
                         if front { self.raise(window, app: app, generation: generation) }
-                        self.verifyFocus(window, app: app, generation: generation, attempt: attempt + 1)
+                        self.verifyFocus(window, app: app, generation: generation, attempt: attempt + 1,
+                            keySent: keySent, keyAccepted: keyAccepted)
                     }
                 } else {
                     self.requestRefresh(pid: window.pid)
