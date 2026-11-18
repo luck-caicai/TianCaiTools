@@ -22,6 +22,7 @@ final class WindowInventory {
     private struct AppInfo { let pid: pid_t; let name: String }
     private let queryQueue = DispatchQueue(label: "local.ctrlswitch.windows", qos: .userInitiated)
     private let focusQueue = DispatchQueue(label: "local.ctrlswitch.focus", qos: .userInteractive)
+    private let closeQueue = DispatchQueue(label: "local.ctrlswitch.close", qos: .userInitiated)
     private let focusGeneration = WindowFocusGeneration()
     private var observers: [pid_t: AXObserver] = [:]
     private var previousElements: [pid_t: [(AXUIElement, String)]] = [:]
@@ -285,7 +286,7 @@ final class WindowInventory {
         let generation = focusGeneration.advance()
         // One native AX press on this window's own close button. No keyboard shortcut,
         // process termination, predicted removal, or automatic save-dialog response.
-        focusQueue.async { [weak self] in
+        closeQueue.async { [weak self] in
             AXUIElementSetMessagingTimeout(window.element, 0.2)
             var pid: pid_t = 0
             let result: WindowCloseResult
@@ -304,7 +305,7 @@ final class WindowInventory {
                 self.onCloseResult?(result)
                 self.requestRefresh(pid: window.pid)
                 if result == .requested {
-                    self.focusQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self.closeQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                         guard let self, self.focusGeneration.contains(generation),
                               let children = Self.attribute(window.element, kAXChildrenAttribute) as? [AXUIElement] else { return }
                         var hasSheet = false
