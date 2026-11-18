@@ -138,6 +138,7 @@ final class WindowSwitcherController {
             selection = WindowSelection(ids: ordered.map(\.id), currentID: inventory.focusedID, reverse: reverse)
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.selection != nil else { return }
+                self.inventory.requestRefresh()
                 self.previews.beginSession()
                 self.render()
             }
