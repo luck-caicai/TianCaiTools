@@ -87,5 +87,41 @@ enum PreviewNavigationTests {
         hover.reset()
         check(!hover.moved(to: CGPoint(x: 106, y: 111)), "old hover cannot survive closing and reopening")
         check(!hover.moved(to: CGPoint(x: CGFloat.infinity, y: 0)), "invalid mouse coordinates rejected")
+
+        var intent = WindowSelection(ids: ["a", "b", "c", "d"], currentID: "a", reverse: false)
+        check(intent.releaseTargetID == "b", "keyboard choice still confirms when Alt is released")
+        intent.hover("c")
+        check(intent.highlightedID == "c" && intent.selectedID == "b", "hover is visual and preserves keyboard target")
+        check(intent.releaseTargetID == nil, "hover plus Alt release cancels instead of entering a window")
+        intent.hover("b")
+        check(intent.releaseTargetID == nil, "hovering the keyboard-selected card also requires a click")
+        intent.move(.right, columns: 2)
+        check(intent.highlightedID == "c" && intent.releaseTargetID == "c", "explicit arrow choice resumes keyboard confirmation")
+        intent.hover("a")
+        intent.cycle(reverse: false)
+        check(intent.selectedID == "b" && intent.releaseTargetID == "b", "explicit Tab choice resumes confirmation")
+        intent.hover("missing")
+        check(intent.releaseTargetID == "b", "stale hover id cannot suppress keyboard confirmation")
+        intent.hover("d")
+        intent.retain(["a", "b", "c"])
+        check(intent.hoveredID == nil && intent.releaseTargetID == nil, "closing the hovered window never confirms another target")
+
+        // A delayed Space transition must not raise an earlier window after a newer selection.
+        let focus = WindowFocusGeneration()
+        let first = focus.advance()
+        let second = focus.advance()
+        var callbacks: [String] = []
+        for (generation, id) in [(first, "old"), (second, "current"), (first, "late-old")] {
+            if focus.contains(generation) { callbacks.append(id) }
+        }
+        check(callbacks == ["current"], "late cross-Space callbacks cannot override a newer switch")
+        focus.advance()
+        check(!focus.contains(second), "opening a new chooser or disabling cancels pending focus work")
+        for index in 0..<100 {
+            let generation = focus.advance()
+            check(focus.contains(generation), "fresh focus intent \(index) is accepted")
+            focus.advance()
+            check(!focus.contains(generation), "canceled focus intent \(index) cannot retry")
+        }
     }
 }

@@ -3,6 +3,23 @@ import Foundation
 
 enum SelectionDirection: CaseIterable { case left, right, up, down }
 
+/// Shared by main and the AX worker. A delayed attempt must never re-focus an older selection.
+final class WindowFocusGeneration {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+
+    @discardableResult func advance() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        value &+= 1
+        return value
+    }
+
+    func contains(_ generation: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return value == generation
+    }
+}
+
 /// No system calls: the event tap only interprets keys, then schedules UI work.
 struct SwitcherKeyState {
     enum Action: Equatable { case begin(reverse: Bool), cycle(reverse: Bool), navigate(SelectionDirection), commit, cancel }
@@ -81,7 +98,11 @@ struct SwitcherKeyState {
 struct WindowSelection {
     private(set) var ids: [String]
     private(set) var index: Int
+    private(set) var hoveredID: String?
+    private(set) var pointerPreviewActive = false
     var selectedID: String? { ids.indices.contains(index) ? ids[index] : nil }
+    var highlightedID: String? { hoveredID ?? selectedID }
+    var releaseTargetID: String? { pointerPreviewActive ? nil : selectedID }
 
     init(ids: [String], currentID: String?, reverse: Bool) {
         self.ids = ids
@@ -92,11 +113,13 @@ struct WindowSelection {
 
     mutating func cycle(reverse: Bool) {
         guard !ids.isEmpty else { return }
+        resumeKeyboardSelection()
         index = (index + (reverse ? ids.count - 1 : 1)) % ids.count
     }
 
     mutating func move(_ direction: SelectionDirection, columns: Int) {
         guard !ids.isEmpty else { return }
+        resumeKeyboardSelection()
         switch direction {
         case .left: cycle(reverse: true)
         case .right: cycle(reverse: false)
@@ -110,7 +133,23 @@ struct WindowSelection {
     }
 
     mutating func select(_ id: String) {
-        if let next = ids.firstIndex(of: id) { index = next }
+        if let next = ids.firstIndex(of: id) {
+            index = next
+            hoveredID = nil
+            pointerPreviewActive = false
+        }
+    }
+
+    mutating func hover(_ id: String) {
+        guard ids.contains(id) else { return }
+        hoveredID = id
+        pointerPreviewActive = true
+    }
+
+    private mutating func resumeKeyboardSelection() {
+        if let hoveredID, let position = ids.firstIndex(of: hoveredID) { index = position }
+        hoveredID = nil
+        pointerPreviewActive = false
     }
 
     /// Keep the order frozen; a closed window must never change another window's identity.
@@ -118,6 +157,7 @@ struct WindowSelection {
         let previous = selectedID
         let oldIndex = index
         ids.removeAll { !live.contains($0) }
+        if let hoveredID, !live.contains(hoveredID) { self.hoveredID = nil }
         index = previous.flatMap { ids.firstIndex(of: $0) } ?? min(oldIndex, max(0, ids.count - 1))
     }
 }

@@ -122,7 +122,7 @@ final class WindowPreviewProvider {
     @available(macOS 26, *)
     private func discoverAndCapture(_ window: SwitchableWindow, _ lease: UInt64, _ session: UInt64) {
         worker.async { [weak self] in
-            SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { content, error in
+            SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: false) { content, error in
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     guard self.active, !self.admission.paused, self.admission.generation == session,

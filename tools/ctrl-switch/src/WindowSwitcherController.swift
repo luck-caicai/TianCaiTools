@@ -39,8 +39,8 @@ final class WindowSwitcherController {
         }
         panel.onHover = { [weak self] id in
             guard let self, self.panel.isVisible, self.selection?.ids.contains(id) == true,
-                  self.selection?.selectedID != id else { return }
-            self.selection?.select(id)
+                  self.selection?.hoveredID != id else { return }
+            self.selection?.hover(id)
             self.hoverSelections += 1
             self.render()
         }
@@ -106,6 +106,7 @@ final class WindowSwitcherController {
         switch action {
         case .begin(let reverse):
             guard isEnabled, keyboardAvailable, !ordered.isEmpty else { keys.cancel(); return }
+            inventory.cancelPendingActivation()
             selection = WindowSelection(ids: ordered.map(\.id), currentID: inventory.focusedID, reverse: reverse)
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.selection != nil else { return }
@@ -121,12 +122,12 @@ final class WindowSwitcherController {
         case .navigate(let direction):
             guard panel.isVisible else { return }
             panel.keyboardSelectionChanged()
-            let previous = selection?.selectedID
+            let previous = selection?.highlightedID
             selection?.move(direction, columns: panel.columnCount)
             if selection?.selectedID != previous { arrowSelections += 1 }
             renderIfVisible()
         case .commit:
-            finish(target: selection?.selectedID)
+            finish(target: selection?.releaseTargetID)
         case .cancel:
             finish(target: nil)
         }
@@ -161,10 +162,11 @@ final class WindowSwitcherController {
     private func render() {
         guard let selection else { return }
         let windows = selection.ids.compactMap { inventory.windows[$0] }
-        panel.show(windows: windows, selectedID: selection.selectedID, previewStatus: previews.status,
+        panel.show(windows: windows, selectedID: selection.highlightedID, previewStatus: previews.status,
+                   pointerPreview: selection.pointerPreviewActive,
                    image: { [unowned self] in self.previews.image(for: $0) })
         let visible = panel.visibleIDs.compactMap { inventory.windows[$0] }
-        let selected = selection.selectedID
+        let selected = selection.highlightedID
         previews.request(visible.sorted { $0.id == selected && $1.id != selected })
     }
 

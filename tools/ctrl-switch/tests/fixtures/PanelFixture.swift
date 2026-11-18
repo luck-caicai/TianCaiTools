@@ -10,7 +10,7 @@ import ApplicationServices
         let windows = names.enumerated().map { index, name in
             SwitchableWindow(id: "fixture-\(index)", windowID: nil, pid: getpid(),
                 applicationName: name.components(separatedBy: " · ").first!, title: name,
-                frame: CGRect(x: 0, y: 0, width: 800, height: 600), minimized: index == 4,
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600), minimized: index == 4, fullscreen: index == 1,
                 element: AXUIElementCreateApplication(getpid()))
         }
         let image = NSImage(size: NSSize(width: 480, height: 300))

@@ -10,6 +10,7 @@ struct SwitchableWindow {
     let title: String
     let frame: CGRect
     let minimized: Bool
+    let fullscreen: Bool
     let element: AXUIElement
 }
 
@@ -18,6 +19,7 @@ final class WindowInventory {
     private struct AppInfo { let pid: pid_t; let name: String }
     private let queryQueue = DispatchQueue(label: "local.ctrlswitch.windows", qos: .userInitiated)
     private let focusQueue = DispatchQueue(label: "local.ctrlswitch.focus", qos: .userInteractive)
+    private let focusGeneration = WindowFocusGeneration()
     private var observers: [pid_t: AXObserver] = [:]
     private var previousElements: [pid_t: [(AXUIElement, String)]] = [:]
     private var workspaceTokens: [NSObjectProtocol] = []
@@ -67,6 +69,7 @@ final class WindowInventory {
                 })
             requestRefresh()
         } else {
+            focusGeneration.advance()
             workspaceTokens.forEach { center.removeObserver($0) }; workspaceTokens.removeAll()
             refreshWork?.cancel(); refreshWork = nil
             pendingPids.removeAll(); pendingFullScan = false; pendingFocusPID = nil
@@ -125,12 +128,10 @@ final class WindowInventory {
                 previousElements[pid] = nil
             }
             let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-            let visible = Set(rows.filter { ($0[kCGWindowIsOnscreen as String] as? Bool) == true }
-                .compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
             var discovered: [SwitchableWindow] = []
             var focused: String?
             for app in chosen {
-                let found = readWindows(app, visible: visible, rows: rows, frontmostPID: focusPID)
+                let found = readWindows(app, rows: rows)
                 discovered.append(contentsOf: found.windows)
                 if app.pid == focusPID { focused = found.focused }
             }
@@ -155,8 +156,7 @@ final class WindowInventory {
         }
     }
 
-    private func readWindows(_ app: AppInfo, visible: Set<CGWindowID>, rows: [[String: Any]],
-                             frontmostPID: pid_t?) -> (windows: [SwitchableWindow], focused: String?) {
+    private func readWindows(_ app: AppInfo, rows: [[String: Any]]) -> (windows: [SwitchableWindow], focused: String?) {
         let axApp = AXUIElementCreateApplication(app.pid)
         AXUIElementSetMessagingTimeout(axApp, 0.12)
         let observer = observerForApp(app.pid, axApp)
@@ -175,18 +175,18 @@ final class WindowInventory {
             guard role == kAXWindowRole,
                   subrole == nil || subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole else { continue }
             let minimized = Self.attribute(element, kAXMinimizedAttribute) as? Bool ?? false
+            let fullscreen = Self.attribute(element, "AXFullScreen") as? Bool ?? false
             let title = String((Self.attribute(element, kAXTitleAttribute) as? String ?? "").prefix(512))
             guard let frame = Self.frame(element), frame.width >= 40, frame.height >= 25 else { continue }
             let wid = Self.windowID(element) ?? Self.uniqueCGMatch(pid: app.pid, title: title, frame: frame, rows: rows)
-            let onScreen = wid.map { visible.contains($0) } ?? false
-            // AX exposes no Space for minimized windows. Enumerate those, but exclude ordinary off-Space windows.
-            guard onScreen || minimized || (wid == nil && app.pid == frontmostPID) else { continue }
+            // AX lists windows on inactive Spaces too. CG's isOnscreen is a visibility flag,
+            // not a liveness test: filtering by it drops fullscreen and other-desktop windows.
             let id = wid.map { "\(app.pid):\($0)" }
                 ?? old.first(where: { CFEqual($0.0, element) })?.1 ?? "\(app.pid):ax:\(UUID().uuidString)"
             tracked.append((element, id))
             result.append(SwitchableWindow(id: id, windowID: wid, pid: app.pid,
                 applicationName: app.name, title: title.isEmpty ? app.name : title,
-                frame: frame, minimized: minimized, element: element))
+                frame: frame, minimized: minimized, fullscreen: fullscreen, element: element))
             if let focusedElement, CFEqual(element, focusedElement) { focused = id }
             if let observer {
                 for notification in [kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
@@ -223,31 +223,71 @@ final class WindowInventory {
     }
 
     func activate(_ window: SwitchableWindow) {
+        let generation = focusGeneration.advance()
         guard isEnabled, windows[window.id] != nil, let app = NSRunningApplication(processIdentifier: window.pid), !app.isTerminated else {
             onFocusResult?(false); requestRefresh(); return
         }
         if app.isHidden { app.unhide() }
-        app.activate(options: [])
         // Advance the intended MRU immediately: a second quick Alt+Tab must not wait for the debounced
         // AX focus notification and choose the same destination twice. The next scan reconciles reality.
         focusedID = window.id
         recency.focus(window.id)
         onChanged?()
         focusQueue.async { [weak self] in
+            guard let self, self.focusGeneration.contains(generation) else { return }
             let axApp = AXUIElementCreateApplication(window.pid)
             AXUIElementSetMessagingTimeout(axApp, 0.2)
             AXUIElementSetMessagingTimeout(window.element, 0.2)
             if window.minimized { AXUIElementSetAttributeValue(window.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
-            _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
-            _ = AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, window.element)
-            _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
-            self?.focusQueue.asyncAfter(deadline: .now() + (window.minimized ? 0.75 : 0.15)) { [weak self] in
-                let focused = Self.attribute(axApp, kAXFocusedWindowAttribute)
-                let matched = focused.map { CFEqual($0, window.element) } ?? false
+            guard self.focusGeneration.contains(generation) else { return }
+            if !WindowActivation.front(pid: window.pid, windowID: window.windowID) {
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard self?.focusGeneration.contains(generation) == true else { return }
+                    app.activate(options: [])
+                }
+            }
+            self.raise(window, app: axApp, generation: generation)
+            // Space/fullscreen transitions are asynchronous. Re-check a small, fixed number of
+            // times; retries only raise the already-frontmost app and never re-front a process.
+            self.verifyFocus(window, app: axApp, generation: generation, attempt: 0)
+        }
+    }
+
+    func cancelPendingActivation() { focusGeneration.advance() }
+
+    private func raise(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64) {
+        guard focusGeneration.contains(generation) else { return }
+        _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        guard focusGeneration.contains(generation) else { return }
+        _ = AXUIElementSetAttributeValue(app, kAXFocusedWindowAttribute as CFString, window.element)
+        guard focusGeneration.contains(generation) else { return }
+        _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+    }
+
+    private func verifyFocus(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64, attempt: Int) {
+        focusQueue.asyncAfter(deadline: .now() + (attempt == 0 ? 0.2 : 0.4)) { [weak self] in
+            guard let self, self.focusGeneration.contains(generation) else { return }
+            let focused = Self.attribute(app, kAXFocusedWindowAttribute)
+            let matched = focused.map { CFEqual($0, window.element) } ?? false
+            let visible = window.windowID.map { wid in
+                let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, wid) as? [[String: Any]] ?? []
+                return rows.contains { ($0[kCGWindowIsOnscreen as String] as? Bool) == true }
+            } ?? true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.focusGeneration.contains(generation) else { return }
+                let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == window.pid
+                if matched && visible && front {
                     self.requestRefresh(pid: window.pid, focusPID: window.pid)
-                    self.onFocusResult?(matched && NSWorkspace.shared.frontmostApplication?.processIdentifier == window.pid)
+                    self.onFocusResult?(true)
+                } else if attempt < 3 {
+                    self.focusQueue.async { [weak self] in
+                        guard let self, self.focusGeneration.contains(generation) else { return }
+                        if front { self.raise(window, app: app, generation: generation) }
+                        self.verifyFocus(window, app: app, generation: generation, attempt: attempt + 1)
+                    }
+                } else {
+                    self.requestRefresh(pid: window.pid)
+                    self.onFocusResult?(false)
                 }
             }
         }

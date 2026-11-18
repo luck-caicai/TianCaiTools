@@ -47,13 +47,13 @@ private final class WindowCard: NSView {
         app.textColor = .secondaryLabelColor
         app.lineBreakMode = .byTruncatingTail
         addSubview(app)
-        stateLabel.stringValue = window.minimized ? "已最小化" : ""
+        stateLabel.stringValue = window.minimized ? "已最小化" : (window.fullscreen ? "全屏" : "")
         stateLabel.frame = CGRect(x: 14, y: 58, width: 68, height: 15)
         stateLabel.font = .systemFont(ofSize: 9)
         stateLabel.textColor = .white
         stateLabel.drawsBackground = true
         stateLabel.backgroundColor = NSColor.black.withAlphaComponent(0.65)
-        stateLabel.isHidden = !window.minimized
+        stateLabel.isHidden = !window.minimized && !window.fullscreen
         addSubview(stateLabel)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -100,6 +100,7 @@ final class SwitcherPanel {
     var visibleIDs: [String] { lastVisibleIDs }
 
     func show(windows: [SwitchableWindow], selectedID: String?, previewStatus: WindowPreviewProvider.Status,
+              pointerPreview: Bool = false,
               image: (String) -> CGImage?) {
         guard !windows.isEmpty else { hide(); return }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
@@ -182,7 +183,8 @@ final class SwitcherPanel {
         switch previewStatus {
         case .needsPermission: hint = "右键菜单允许屏幕录制后可显示预览"
         case .paused: hint = "预览暂时暂停，窗口切换仍可使用"
-        default: hint = "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消"
+        default: hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
+            : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消"
         }
         footer?.stringValue = hint
         countLabel?.stringValue = "\(selected + 1) / \(windows.count)"
@@ -199,8 +201,13 @@ final class SwitcherPanel {
     func setImage(_ image: CGImage, for id: String) { cards[id]?.setImage(image) }
     func keyboardSelectionChanged() { hover.rebase(at: NSEvent.mouseLocation) }
     private func hovered(_ id: String) {
-        guard isVisible, cards[id] != nil, hover.moved(to: NSEvent.mouseLocation) else { return }
+        guard isVisible, pointerInside(id), hover.moved(to: NSEvent.mouseLocation) else { return }
         onHover?(id)
+    }
+    private func pointerInside(_ id: String) -> Bool {
+        guard let panel, let card = cards[id] else { return false }
+        let point = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        return card.visibleRect.contains(card.convert(point, from: nil))
     }
     func evict(_ ids: Set<String>) { ids.forEach { cards[$0]?.setImage(nil) } }
     func clearCardImages() { cards.values.forEach { $0.setImage(nil) } }
