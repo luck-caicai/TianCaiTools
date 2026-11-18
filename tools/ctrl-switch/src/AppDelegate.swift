@@ -59,7 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showPermissionHelp()
             }
         }
-        if CommandLine.arguments.contains("--exercise-switcher") { scheduleExercise(attempt: 0) }
+        if CommandLine.arguments.contains("--exercise-switcher") || CommandLine.arguments.contains("--exercise-close-fixture") {
+            scheduleExercise(attempt: 0)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -360,7 +362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "captureInFlight": switcher.previews.hasInFlightRequest,
             "completedCaptures": switcher.previews.completedCaptures, "failedCaptures": switcher.previews.failedCaptures,
             "committedSwitches": switcher.committedSwitches, "confirmedSwitches": switcher.confirmedSwitches,
-            "arrowSelections": switcher.arrowSelections, "hoverSelections": switcher.hoverSelections
+            "arrowSelections": switcher.arrowSelections, "hoverSelections": switcher.hoverSelections,
+            "closeRequests": switcher.closeRequests, "acceptedCloseRequests": switcher.acceptedCloseRequests,
+            "failedCloseRequests": switcher.failedCloseRequests, "lastCloseResult": switcher.lastCloseResult
         ]
         var memory = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
@@ -377,6 +381,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func scheduleExercise(attempt: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self else { return }
+            if CommandLine.arguments.contains("--exercise-close-fixture") {
+                guard let target = NSRunningApplication.runningApplications(withBundleIdentifier: "local.ctrlswitch.close-target").first else {
+                    self.exerciseResult = ["exercised": false, "reason": "close test fixture is not running"]
+                    return
+                }
+                let pid = target.processIdentifier
+                if !self.switcher.inventory.windows.values.contains(where: { $0.pid == pid }), attempt < 20 {
+                    self.scheduleExercise(attempt: attempt + 1)
+                    return
+                }
+                self.switcher.showCloseFixture(pid: pid)
+                return
+            }
             if self.switcher.inventory.windows.isEmpty, attempt < 20 {
                 self.scheduleExercise(attempt: attempt + 1)
                 return

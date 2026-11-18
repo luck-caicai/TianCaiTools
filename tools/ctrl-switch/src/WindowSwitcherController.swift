@@ -9,12 +9,17 @@ final class WindowSwitcherController {
     private var selection: WindowSelection?
     private var showWork: DispatchWorkItem?
     private var keyboardAvailable = false
+    private var closeFixturePID: pid_t?
     private(set) var isEnabled: Bool
     private(set) var previewsEnabled: Bool
     private(set) var committedSwitches = 0
     private(set) var confirmedSwitches = 0
     private(set) var arrowSelections = 0
     private(set) var hoverSelections = 0
+    private(set) var closeRequests = 0
+    private(set) var acceptedCloseRequests = 0
+    private(set) var failedCloseRequests = 0
+    private(set) var lastCloseResult = "none"
     var onChanged: (() -> Void)?
     var onKeyReleasesDrained: (() -> Void)?
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
@@ -45,9 +50,25 @@ final class WindowSwitcherController {
             self.hoverSelections += 1
             self.render()
         }
+        panel.onClose = { [weak self] id in
+            guard let self, self.selection?.ids.contains(id) == true,
+                  let window = self.inventory.windows[id], window.canClose else { return }
+            guard self.closeFixturePID == nil || self.closeFixturePID == window.pid else { return }
+            self.keys.cancel()
+            self.finish(target: nil)
+            self.closeRequests += 1
+            self.inventory.requestClose(window)
+        }
         inventory.onFocusResult = { [weak self] success in
             if success { self?.confirmedSwitches += 1 }
             self?.onChanged?()
+        }
+        inventory.onCloseResult = { [weak self] result in
+            guard let self else { return }
+            self.lastCloseResult = result.rawValue
+            if result == .requested { self.acceptedCloseRequests += 1 }
+            else { self.failedCloseRequests += 1; NSSound.beep() }
+            self.onChanged?()
         }
         previews.configure(enabled: enabled && previewsEnabled)
     }
@@ -204,5 +225,20 @@ final class WindowSwitcherController {
             }
         }
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Manual integration QA only. Keep a fixed set of explicitly created disposable windows;
+    /// the normal close callback cannot affect other apps while this fixture mode is active.
+    func showCloseFixture(pid: pid_t) {
+        let windows = ordered.filter { $0.pid == pid }
+        guard keyboardAvailable, !windows.isEmpty else { return }
+        closeFixturePID = pid
+        inventory.cancelPendingActivation()
+        selection = WindowSelection(ids: windows.map(\.id), currentID: nil, reverse: false)
+        previews.beginSession()
+        render()
+        let timeout = DispatchWorkItem { [weak self] in self?.cancel(resetKeys: true) }
+        showWork?.cancel(); showWork = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
     }
 }

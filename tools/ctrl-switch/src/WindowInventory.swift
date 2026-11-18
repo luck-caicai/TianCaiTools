@@ -11,8 +11,11 @@ struct SwitchableWindow {
     let frame: CGRect
     let minimized: Bool
     let fullscreen: Bool
+    let canClose: Bool
     let element: AXUIElement
 }
+
+enum WindowCloseResult: String { case requested, unavailable, stale, failed }
 
 /// All AX queries run off main with an IPC timeout. Nothing is periodically polled while idle.
 final class WindowInventory {
@@ -38,6 +41,7 @@ final class WindowInventory {
     private(set) var lastFocusCheck: [String: Any] = [:]
     var onChanged: (() -> Void)?
     var onFocusResult: ((Bool) -> Void)?
+    var onCloseResult: ((WindowCloseResult) -> Void)?
 
     // Optional identity bridge; screenshots themselves use public ScreenCaptureKit.
     // If unavailable, public CG metadata is matched only when unambiguous.
@@ -191,6 +195,7 @@ final class WindowInventory {
                   subrole == nil || subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole else { continue }
             let minimized = Self.attribute(element, kAXMinimizedAttribute) as? Bool ?? false
             let fullscreen = Self.attribute(element, "AXFullScreen") as? Bool ?? false
+            let canClose = Self.closeButton(element).map { Self.attribute($0, kAXEnabledAttribute) as? Bool != false } ?? false
             let title = String((Self.attribute(element, kAXTitleAttribute) as? String ?? "").prefix(512))
             guard let frame = Self.frame(element), frame.width >= 40, frame.height >= 25 else { continue }
             let wid = Self.windowID(element) ?? Self.uniqueCGMatch(pid: app.pid, title: title, frame: frame, rows: rows)
@@ -201,7 +206,7 @@ final class WindowInventory {
             tracked.append((element, id))
             result.append(SwitchableWindow(id: id, windowID: wid, pid: app.pid,
                 applicationName: app.name, title: title.isEmpty ? app.name : title,
-                frame: frame, minimized: minimized, fullscreen: fullscreen, element: element))
+                frame: frame, minimized: minimized, fullscreen: fullscreen, canClose: canClose, element: element))
             if let focusedElement, CFEqual(element, focusedElement) { focused = id }
             if let observer {
                 for notification in [kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
@@ -272,6 +277,66 @@ final class WindowInventory {
     }
 
     func cancelPendingActivation() { focusGeneration.advance() }
+
+    func requestClose(_ window: SwitchableWindow) {
+        guard isEnabled, let live = windows[window.id], CFEqual(live.element, window.element), window.canClose else {
+            onCloseResult?(.unavailable); return
+        }
+        let generation = focusGeneration.advance()
+        // One native AX press on this window's own close button. No keyboard shortcut,
+        // process termination, predicted removal, or automatic save-dialog response.
+        focusQueue.async { [weak self] in
+            AXUIElementSetMessagingTimeout(window.element, 0.2)
+            var pid: pid_t = 0
+            let result: WindowCloseResult
+            if AXUIElementGetPid(window.element, &pid) != .success || pid != window.pid
+                || Self.attribute(window.element, kAXRoleAttribute) as? String != kAXWindowRole {
+                result = .stale
+            } else if let expected = window.windowID, let actual = Self.windowID(window.element), expected != actual {
+                result = .stale
+            } else if let button = Self.closeButton(window.element) {
+                AXUIElementSetMessagingTimeout(button, 0.2)
+                if Self.attribute(button, kAXEnabledAttribute) as? Bool == false { result = .unavailable }
+                else { result = AXUIElementPerformAction(button, kAXPressAction as CFString) == .success ? .requested : .failed }
+            } else { result = .unavailable }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onCloseResult?(result)
+                self.requestRefresh(pid: window.pid)
+                if result == .requested {
+                    self.focusQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                        guard let self, self.focusGeneration.contains(generation),
+                              let children = Self.attribute(window.element, kAXChildrenAttribute) as? [AXUIElement] else { return }
+                        var hasSheet = false
+                        let deadline = ProcessInfo.processInfo.systemUptime + 0.35
+                        for child in children.prefix(12) {
+                            guard self.focusGeneration.contains(generation),
+                                  ProcessInfo.processInfo.systemUptime < deadline else { return }
+                            AXUIElementSetMessagingTimeout(child, 0.1)
+                            if Self.attribute(child, kAXRoleAttribute) as? String == kAXSheetRole { hasSheet = true; break }
+                        }
+                        guard hasSheet else { return }
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, self.focusGeneration.contains(generation) else { return }
+                            // Bring a native save/confirmation sheet into view; a newer user choice
+                            // cancels this focus intent. We never answer the sheet for the user.
+                            self.activate(window)
+                        }
+                    }
+                    // Some apps close asynchronously or first ask whether to save. Keep actual
+                    // AX liveness authoritative, including when the user cancels that prompt.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                        self?.requestRefresh(pid: window.pid)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func closeButton(_ window: AXUIElement) -> AXUIElement? {
+        guard let value = attribute(window, kAXCloseButtonAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
 
     private func raise(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64) {
         guard focusGeneration.contains(generation) else { return }

@@ -13,6 +13,7 @@ import ApplicationServices
             SwitchableWindow(id: "fixture-\(index)", windowID: nil, pid: getpid(),
                 applicationName: name.components(separatedBy: " · ").first!, title: name,
                 frame: CGRect(x: 0, y: 0, width: 800, height: 600), minimized: index == 4, fullscreen: index == 1,
+                canClose: index != 5,
                 element: AXUIElementCreateApplication(getpid()))
         }
         let image = NSImage(size: NSSize(width: 480, height: 300))
@@ -45,12 +46,34 @@ import ApplicationServices
                     }
                 }
             }
+            panel.onClose = { id in
+                panel.hide()
+                let report: [String: Any] = ["closed": id, "panelVisible": panel.isVisible,
+                    "surfaceCount": panel.visibleSurfaceCount]
+                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                    try? data.write(to: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("panel-close-report.json"))
+                }
+            }
         }
         panel.show(windows: windows, selectedID: "fixture-2", previewStatus: .ready, image: { _ in bitmap })
         if lifecycle {
             var chosen: [String] = []
+            var closed: [String] = []
             var checks: [String: Bool] = [:]
             panel.onChoose = { id in chosen.append(id); panel.hide() }
+            panel.onClose = { id in closed.append(id); panel.hide() }
+            func finish() {
+                let passed = checks.values.allSatisfy { $0 }
+                let report: [String: Any] = ["passed": passed, "checks": checks,
+                    "scope": "production accessibility actions and window lifecycle; no global input or user-window focus"]
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                    try data.write(to: URL(fileURLWithPath: output))
+                    print(String(decoding: data, as: UTF8.self))
+                } catch { print(error); exit(1) }
+                panel.releaseResources()
+                exit(passed ? 0 : 1)
+            }
             checks["firstActionQueued"] = panel.chooseForFixture("fixture-0")
             panel.hide()
             panel.show(windows: windows, selectedID: "fixture-2", previewStatus: .ready, image: { _ in bitmap })
@@ -65,16 +88,22 @@ import ApplicationServices
                     panel.hide()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         checks["closedAfterCancel"] = !panel.isVisible && panel.visibleSurfaceCount == 0
-                        let passed = checks.values.allSatisfy { $0 }
-                        let report: [String: Any] = ["passed": passed, "checks": checks,
-                            "scope": "production accessibility action and window lifecycle; no global input or user-window focus"]
-                        do {
-                            let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
-                            try data.write(to: URL(fileURLWithPath: output))
-                            print(String(decoding: data, as: UTF8.self))
-                        } catch { print(error); exit(1) }
-                        panel.releaseResources()
-                        exit(passed ? 0 : 1)
+                        panel.show(windows: windows, selectedID: "fixture-0", previewStatus: .ready, image: { _ in bitmap })
+                        checks["unavailableCloseDisabled"] = !panel.closeForFixture("fixture-5")
+                        checks["disabledCloseCannotChoose"] = chosen == ["fixture-1"] && closed.isEmpty && panel.isVisible
+                        checks["oldCloseQueued"] = panel.closeForFixture("fixture-0")
+                        panel.hide()
+                        panel.show(windows: windows, selectedID: "fixture-1", previewStatus: .ready, image: { _ in bitmap })
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            checks["oldCloseCannotAffectNewSession"] = closed.isEmpty && panel.isVisible
+                            checks["currentCloseQueued"] = panel.closeForFixture("fixture-2")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                checks["closeTargetsExactCard"] = closed == ["fixture-2"]
+                                checks["closeDoesNotChoose"] = chosen == ["fixture-1"]
+                                checks["closedAfterCloseAction"] = !panel.isVisible && panel.visibleSurfaceCount == 0
+                                finish()
+                            }
+                        }
                     }
                 }
             }
