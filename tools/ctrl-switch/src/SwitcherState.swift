@@ -45,10 +45,12 @@ struct SwitcherKeyState {
     private(set) var isSelecting = false
     private(set) var swallowedKeys = Set<CGKeyCode>()
     private var waitForOptionRelease = false
+    private var optionDown = false
 
     mutating func handle(_ type: CGEventType, key: CGKeyCode, flags: CGEventFlags,
                          isRepeat: Bool = false, canBegin: Bool = true, canNavigate: Bool = false) -> Result {
         let option = flags.contains(.maskAlternate)
+        optionDown = option
         let extra = !flags.intersection([.maskControl, .maskCommand, .maskSecondaryFn]).isEmpty
         if type == .keyUp {
             return Result(consume: swallowedKeys.remove(key) != nil)
@@ -98,7 +100,8 @@ struct SwitcherKeyState {
     }
 
     mutating func cancel() {
-        if isSelecting || !swallowedKeys.isEmpty { waitForOptionRelease = true }
+        if !optionDown { waitForOptionRelease = false }
+        else if isSelecting || !swallowedKeys.isEmpty { waitForOptionRelease = true }
         isSelecting = false
     }
 
@@ -106,6 +109,7 @@ struct SwitcherKeyState {
         isSelecting = false
         swallowedKeys.removeAll()
         waitForOptionRelease = false
+        optionDown = false
     }
 }
 

@@ -9,12 +9,19 @@ final class WindowSwitcherController {
     private var selection: WindowSelection?
     private var showWork: DispatchWorkItem?
     private var keyboardAvailable = false
+    private var closeFixturePID: pid_t?
+    private var pendingCloseIDs = Set<String>()
     private(set) var isEnabled: Bool
     private(set) var previewsEnabled: Bool
     private(set) var committedSwitches = 0
     private(set) var confirmedSwitches = 0
     private(set) var arrowSelections = 0
     private(set) var hoverSelections = 0
+    private(set) var closeRequests = 0
+    private(set) var acceptedCloseRequests = 0
+    private(set) var unconfirmedCloseRequests = 0
+    private(set) var failedCloseRequests = 0
+    private(set) var lastCloseResult = "none"
     var onChanged: (() -> Void)?
     var onKeyReleasesDrained: (() -> Void)?
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
@@ -45,9 +52,40 @@ final class WindowSwitcherController {
             self.hoverSelections += 1
             self.render()
         }
+        panel.onClose = { [weak self] id in
+            guard let self, self.selection?.ids.contains(id) == true,
+                  let window = self.inventory.windows[id], window.canClose,
+                  !self.pendingCloseIDs.contains(id) else { return }
+            guard self.closeFixturePID == nil || self.closeFixturePID == window.pid else { return }
+            self.selection?.select(id)
+            self.selection?.hover(id)
+            self.pendingCloseIDs.insert(id)
+            self.renderIfVisible()
+            self.closeRequests += 1
+            self.inventory.requestClose(window)
+        }
         inventory.onFocusResult = { [weak self] success in
             if success { self?.confirmedSwitches += 1 }
             self?.onChanged?()
+        }
+        inventory.onCloseResult = { [weak self] id, result in
+            guard let self else { return }
+            self.pendingCloseIDs.remove(id)
+            self.lastCloseResult = result.rawValue
+            switch result {
+            case .requested: self.acceptedCloseRequests += 1
+            case .unconfirmed: self.unconfirmedCloseRequests += 1
+            case .stale: self.failedCloseRequests += 1
+            case .unavailable, .failed: self.failedCloseRequests += 1
+            }
+            if result.shouldSignalFailure { NSSound.beep() }
+            self.renderIfVisible()
+            self.onChanged?()
+        }
+        inventory.onCloseConfirmation = { [weak self] id in
+            guard let self, self.selection?.ids.contains(id) == true else { return }
+            // Let the original application's save/cancel sheet receive input unobscured.
+            self.cancel()
         }
         previews.configure(enabled: enabled && previewsEnabled)
     }
@@ -111,6 +149,7 @@ final class WindowSwitcherController {
             selection = WindowSelection(ids: ordered.map(\.id), currentID: inventory.focusedID, reverse: reverse)
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.selection != nil else { return }
+                self.inventory.requestRefresh()
                 self.previews.beginSession()
                 self.render()
             }
@@ -128,13 +167,15 @@ final class WindowSwitcherController {
             if selection?.selectedID != previous { arrowSelections += 1 }
             renderIfVisible()
         case .commit:
-            finish(target: selection?.releaseTargetID)
+            // Releasing Option ends the chooser, but a requested native close may still
+            // produce a save sheet. Keep that close's bounded confirmation intent valid.
+            finish(target: selection?.releaseTargetID, cancelActivation: false)
         case .cancel:
             finish(target: nil)
         }
     }
 
-    private func finish(target: String?) {
+    private func finish(target: String?, cancelActivation: Bool = true) {
         let window = target.flatMap { inventory.windows[$0] }
         showWork?.cancel(); showWork = nil
         selection = nil
@@ -143,13 +184,14 @@ final class WindowSwitcherController {
         if let window {
             committedSwitches += 1
             inventory.activate(window)
-        }
+        } else if cancelActivation { inventory.cancelPendingActivation() }
         onChanged?()
     }
 
     private func inventoryChanged() {
         ordered = inventory.orderedWindows()
         let live = Set(inventory.windows.keys)
+        pendingCloseIDs.formIntersection(live)
         previews.retain(live)
         if selection != nil {
             selection?.retain(live)
@@ -165,6 +207,7 @@ final class WindowSwitcherController {
         let windows = selection.ids.compactMap { inventory.windows[$0] }
         panel.show(windows: windows, selectedID: selection.highlightedID, previewStatus: previews.status,
                    pointerPreview: selection.pointerPreviewActive,
+                   closingIDs: pendingCloseIDs,
                    image: { [unowned self] in self.previews.image(for: $0) })
         let visible = panel.visibleIDs.compactMap { inventory.windows[$0] }
         let selected = selection.highlightedID
@@ -204,5 +247,20 @@ final class WindowSwitcherController {
             }
         }
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Manual integration QA only. Keep a fixed set of explicitly created disposable windows;
+    /// the normal close callback cannot affect other apps while this fixture mode is active.
+    func showCloseFixture(pid: pid_t) {
+        let windows = ordered.filter { $0.pid == pid }
+        guard keyboardAvailable, !windows.isEmpty else { return }
+        closeFixturePID = pid
+        inventory.cancelPendingActivation()
+        selection = WindowSelection(ids: windows.map(\.id), currentID: nil, reverse: false)
+        previews.beginSession()
+        render()
+        let timeout = DispatchWorkItem { [weak self] in self?.cancel(resetKeys: true) }
+        showWork?.cancel(); showWork = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
     }
 }

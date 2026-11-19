@@ -11,14 +11,17 @@ struct SwitchableWindow {
     let frame: CGRect
     let minimized: Bool
     let fullscreen: Bool
+    let canClose: Bool
     let element: AXUIElement
 }
 
 /// All AX queries run off main with an IPC timeout. Nothing is periodically polled while idle.
 final class WindowInventory {
     private struct AppInfo { let pid: pid_t; let name: String }
+    private struct CloseConfirmationIntent { let window: SwitchableWindow; let generation: UInt64 }
     private let queryQueue = DispatchQueue(label: "local.ctrlswitch.windows", qos: .userInitiated)
     private let focusQueue = DispatchQueue(label: "local.ctrlswitch.focus", qos: .userInteractive)
+    private let closeQueue = DispatchQueue(label: "local.ctrlswitch.close", qos: .userInitiated)
     private let focusGeneration = WindowFocusGeneration()
     private var observers: [pid_t: AXObserver] = [:]
     private var previousElements: [pid_t: [(AXUIElement, String)]] = [:]
@@ -31,13 +34,17 @@ final class WindowInventory {
     private var epoch = 0
     private var recency = WindowRecency()
     private var zOrder: [CGWindowID] = []
+    private var closeConfirmationIntent: CloseConfirmationIntent?
     private(set) var isEnabled = false
     private(set) var windows: [String: SwitchableWindow] = [:]
     private(set) var focusedID: String?
     private(set) var appWindowSources: [pid_t: [String: Any]] = [:]
     private(set) var lastFocusCheck: [String: Any] = [:]
+    private(set) var lastCloseConfirmationSource = "none"
     var onChanged: (() -> Void)?
     var onFocusResult: ((Bool) -> Void)?
+    var onCloseResult: ((String, WindowCloseResult) -> Void)?
+    var onCloseConfirmation: ((String) -> Void)?
 
     // Optional identity bridge; screenshots themselves use public ScreenCaptureKit.
     // If unavailable, public CG metadata is matched only when unambiguous.
@@ -72,6 +79,7 @@ final class WindowInventory {
             requestRefresh()
         } else {
             focusGeneration.advance()
+            closeConfirmationIntent = nil
             workspaceTokens.forEach { center.removeObserver($0) }; workspaceTokens.removeAll()
             refreshWork?.cancel(); refreshWork = nil
             pendingPids.removeAll(); pendingFullScan = false; pendingFocusPID = nil
@@ -152,6 +160,7 @@ final class WindowInventory {
                 sources.forEach { appWindowSources[$0.key] = $0.value }
                 windows = windows.filter { livePids.contains($0.value.pid) && !replaced.contains($0.value.pid) }
                 for window in discovered { windows[window.id] = window }
+                if let intent = closeConfirmationIntent, windows[intent.window.id] == nil { closeConfirmationIntent = nil }
                 zOrder = order
                 recency.retain(Set(windows.keys))
                 if let focused, focusPID == NSWorkspace.shared.frontmostApplication?.processIdentifier {
@@ -191,6 +200,7 @@ final class WindowInventory {
                   subrole == nil || subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole else { continue }
             let minimized = Self.attribute(element, kAXMinimizedAttribute) as? Bool ?? false
             let fullscreen = Self.attribute(element, "AXFullScreen") as? Bool ?? false
+            let canClose = Self.closeButton(element).map { Self.attribute($0, kAXEnabledAttribute) as? Bool != false } ?? false
             let title = String((Self.attribute(element, kAXTitleAttribute) as? String ?? "").prefix(512))
             guard let frame = Self.frame(element), frame.width >= 40, frame.height >= 25 else { continue }
             let wid = Self.windowID(element) ?? Self.uniqueCGMatch(pid: app.pid, title: title, frame: frame, rows: rows)
@@ -201,12 +211,12 @@ final class WindowInventory {
             tracked.append((element, id))
             result.append(SwitchableWindow(id: id, windowID: wid, pid: app.pid,
                 applicationName: app.name, title: title.isEmpty ? app.name : title,
-                frame: frame, minimized: minimized, fullscreen: fullscreen, element: element))
+                frame: frame, minimized: minimized, fullscreen: fullscreen, canClose: canClose, element: element))
             if let focusedElement, CFEqual(element, focusedElement) { focused = id }
             if let observer {
                 for notification in [kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
                                      kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification,
-                                     kAXMovedNotification, kAXResizedNotification] {
+                                     kAXMovedNotification, kAXResizedNotification, kAXSheetCreatedNotification] {
                     AXObserverAddNotification(observer, element, notification as CFString, Unmanaged.passUnretained(self).toOpaque())
                 }
             }
@@ -221,18 +231,23 @@ final class WindowInventory {
     private func observerForApp(_ pid: pid_t, _ app: AXUIElement) -> AXObserver? {
         if let observer = observers[pid] { return observer }
         var created: AXObserver?
-        let error = AXObserverCreate(pid, { observer, _, _, context in
+        let error = AXObserverCreate(pid, { observer, element, notification, context in
             guard let context else { return }
             let inventory = Unmanaged<WindowInventory>.fromOpaque(context).takeUnretainedValue()
             // A destroyed AX node may no longer answer its PID. Resolve the observer instead.
             inventory.queryQueue.async { [weak inventory] in
                 guard let inventory, let pid = inventory.observers.first(where: { CFEqual($0.value, observer) })?.key else { return }
-                DispatchQueue.main.async { [weak inventory] in inventory?.requestRefresh(pid: pid) }
+                DispatchQueue.main.async { [weak inventory] in
+                    inventory?.requestRefresh(pid: pid)
+                    if notification as String == kAXSheetCreatedNotification {
+                        inventory?.closeSheetCreated(element, pid: pid)
+                    }
+                }
             }
         }, &created)
         guard error == .success, let observer = created else { return nil }
         for notification in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification,
-                             kAXApplicationHiddenNotification, kAXApplicationShownNotification] {
+                             kAXApplicationHiddenNotification, kAXApplicationShownNotification, kAXSheetCreatedNotification] {
             AXObserverAddNotification(observer, app, notification as CFString, Unmanaged.passUnretained(self).toOpaque())
         }
         observers[pid] = observer
@@ -241,6 +256,7 @@ final class WindowInventory {
     }
 
     func activate(_ window: SwitchableWindow) {
+        closeConfirmationIntent = nil
         let generation = focusGeneration.advance()
         guard isEnabled, windows[window.id] != nil, let app = NSRunningApplication(processIdentifier: window.pid), !app.isTerminated else {
             onFocusResult?(false); requestRefresh(); return
@@ -271,7 +287,103 @@ final class WindowInventory {
         }
     }
 
-    func cancelPendingActivation() { focusGeneration.advance() }
+    func cancelPendingActivation() { focusGeneration.advance(); closeConfirmationIntent = nil }
+
+    func requestClose(_ window: SwitchableWindow) {
+        guard isEnabled, let live = windows[window.id], CFEqual(live.element, window.element), window.canClose else {
+            onCloseResult?(window.id, .unavailable); return
+        }
+        let generation = focusGeneration.advance()
+        closeConfirmationIntent = CloseConfirmationIntent(window: window, generation: generation)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard self?.closeConfirmationIntent?.generation == generation else { return }
+            self?.closeConfirmationIntent = nil
+        }
+        // One native AX press on this window's own close button. No keyboard shortcut,
+        // process termination, predicted removal, or automatic save-dialog response.
+        closeQueue.async { [weak self] in
+            AXUIElementSetMessagingTimeout(window.element, 0.2)
+            var pid: pid_t = 0
+            let result: WindowCloseResult
+            if AXUIElementGetPid(window.element, &pid) != .success || pid != window.pid
+                || Self.attribute(window.element, kAXRoleAttribute) as? String != kAXWindowRole {
+                result = .stale
+            } else if let expected = window.windowID, let actual = Self.windowID(window.element), expected != actual {
+                result = .stale
+            } else if let button = Self.closeButton(window.element) {
+                AXUIElementSetMessagingTimeout(button, 0.2)
+                if Self.attribute(button, kAXEnabledAttribute) as? Bool == false { result = .unavailable }
+                else {
+                    result = .fromActionReply(AXUIElementPerformAction(button, kAXPressAction as CFString))
+                }
+            } else { result = .unavailable }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onCloseResult?(window.id, result)
+                self.requestRefresh(pid: window.pid)
+                if !result.mayHaveBeenDelivered, self.closeConfirmationIntent?.generation == generation {
+                    self.closeConfirmationIntent = nil
+                }
+                if result.mayHaveBeenDelivered {
+                    self.closeQueue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                        guard let self, self.focusGeneration.contains(generation),
+                              let children = Self.attribute(window.element, kAXChildrenAttribute) as? [AXUIElement] else { return }
+                        var hasSheet = false
+                        let deadline = ProcessInfo.processInfo.systemUptime + 0.35
+                        for child in children.prefix(12) {
+                            guard self.focusGeneration.contains(generation),
+                                  ProcessInfo.processInfo.systemUptime < deadline else { return }
+                            AXUIElementSetMessagingTimeout(child, 0.1)
+                            if Self.attribute(child, kAXRoleAttribute) as? String == kAXSheetRole { hasSheet = true; break }
+                        }
+                        guard hasSheet else { return }
+                        DispatchQueue.main.async { [weak self] in
+                            self?.revealCloseConfirmation(generation: generation, source: "probe")
+                        }
+                    }
+                    // Some apps close asynchronously or first ask whether to save. Keep actual
+                    // AX liveness authoritative, including when the user cancels that prompt.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                        self?.requestRefresh(pid: window.pid)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Native sheets may appear after AXPress returns. Observe the existing per-app/window
+    /// AXObserver rather than relying only on one early children snapshot.
+    private func closeSheetCreated(_ element: AXUIElement, pid: pid_t) {
+        guard let intent = closeConfirmationIntent, intent.window.pid == pid,
+              focusGeneration.contains(intent.generation) else { return }
+        closeQueue.async { [weak self] in
+            AXUIElementSetMessagingTimeout(element, 0.1)
+            var owner: AXUIElement? = element
+            if !CFEqual(element, intent.window.element) {
+                if let value = Self.attribute(element, kAXWindowAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() {
+                    owner = (value as! AXUIElement)
+                } else { owner = nil }
+            }
+            guard let owner, CFEqual(owner, intent.window.element) else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.revealCloseConfirmation(generation: intent.generation, source: "notification")
+            }
+        }
+    }
+
+    private func revealCloseConfirmation(generation: UInt64, source: String) {
+        guard let intent = closeConfirmationIntent, intent.generation == generation,
+              focusGeneration.contains(generation) else { return }
+        closeConfirmationIntent = nil
+        lastCloseConfirmationSource = source
+        onCloseConfirmation?(intent.window.id)
+        activate(intent.window)
+    }
+
+    private static func closeButton(_ window: AXUIElement) -> AXUIElement? {
+        guard let value = attribute(window, kAXCloseButtonAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
 
     private func raise(_ window: SwitchableWindow, app: AXUIElement, generation: UInt64) {
         guard focusGeneration.contains(generation) else { return }

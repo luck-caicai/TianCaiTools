@@ -5,6 +5,10 @@ private final class SwitcherHUD: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private final class CardCloseButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 private final class WindowCard: NSView {
     let id: String
     private let picture = CALayer()
@@ -12,8 +16,10 @@ private final class WindowCard: NSView {
     private let stateLabel = NSTextField(labelWithString: "")
     private var hoverArea: NSTrackingArea?
     private var clickArmed = false
+    private let closeButton = CardCloseButton(frame: .zero)
     var onClick: ((String) -> Void)?
     var onHover: ((String) -> Void)?
+    var onClose: ((String) -> Void)?
 
     init(window: SwitchableWindow, icon: NSImage?, frame: NSRect) {
         id = window.id
@@ -56,19 +62,57 @@ private final class WindowCard: NSView {
         stateLabel.backgroundColor = NSColor.black.withAlphaComponent(0.65)
         stateLabel.isHidden = !window.minimized && !window.fullscreen
         addSubview(stateLabel)
+        closeButton.frame = CGRect(x: frame.width - 36, y: frame.height - 36, width: 24, height: 24)
+        closeButton.title = ""
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭窗口")
+        closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        closeButton.imagePosition = .imageOnly
+        closeButton.isBordered = false
+        closeButton.setButtonType(.momentaryChange)
+        closeButton.refusesFirstResponder = true
+        closeButton.focusRingType = .none
+        closeButton.contentTintColor = .white
+        closeButton.wantsLayer = true
+        closeButton.layer?.cornerRadius = 12
+        closeButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
+        closeButton.target = self
+        closeButton.action = #selector(closePressed)
+        closeButton.setAccessibilityLabel("关闭窗口：\(window.applicationName)，\(window.title)")
+        setClosable(window.canClose)
+        addSubview(closeButton)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("\(window.applicationName)，\(window.title)")
     }
     required init?(coder: NSCoder) { fatalError("Programmatic view") }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) { clickArmed = true }
+    override func mouseDown(with event: NSEvent) {
+        clickArmed = !closeButton.frame.contains(convert(event.locationInWindow, from: nil))
+    }
     override func mouseUp(with event: NSEvent) {
         let armed = clickArmed
         clickArmed = false
-        guard armed, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard armed, bounds.contains(point), !closeButton.frame.contains(point) else { return }
         onClick?(id)
     }
+    @objc private func closePressed() {
+        guard closeButton.isEnabled else { return }
+        clickArmed = false
+        onClose?(id)
+    }
+    func setClosable(_ value: Bool) {
+        closeButton.isEnabled = value
+        closeButton.alphaValue = value ? 1 : 0.3
+        closeButton.toolTip = value ? "关闭此窗口" : "此窗口暂不提供原生关闭操作"
+    }
+    #if UI_FIXTURE
+    func closeForFixture() -> Bool {
+        guard closeButton.isEnabled else { return false }
+        closeButton.performClick(nil)
+        return true
+    }
+    #endif
     override func accessibilityPerformPress() -> Bool {
         guard let onClick else { return false }
         onClick(id)
@@ -108,6 +152,7 @@ final class SwitcherPanel {
     private var presentationGeneration: UInt64 = 0
     var onChoose: ((String) -> Void)?
     var onHover: ((String) -> Void)?
+    var onClose: ((String) -> Void)?
     private(set) var columnCount = 1
     var isVisible: Bool { panel?.isVisible == true }
     var visibleIDs: [String] { lastVisibleIDs }
@@ -121,6 +166,7 @@ final class SwitcherPanel {
 
     func show(windows: [SwitchableWindow], selectedID: String?, previewStatus: WindowPreviewProvider.Status,
               pointerPreview: Bool = false,
+              closingIDs: Set<String> = [],
               image: (String) -> CGImage?) {
         guard !windows.isEmpty else { hide(); return }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
@@ -188,6 +234,12 @@ final class SwitcherPanel {
                     }
                 }
                 card.onHover = { [weak self] id in self?.hovered(id) }
+                card.onClose = { [weak self] id in
+                    // The close callback keeps the panel alive, so dispatch before a following
+                    // Option release can finish the session and discard this completed click.
+                    guard let self, self.presentationGeneration == generation, self.isVisible else { return }
+                    self.onClose?(id)
+                }
                 root.addSubview(card)
                 cards[window.id] = card
             }
@@ -217,6 +269,7 @@ final class SwitcherPanel {
         footer?.stringValue = hint
         countLabel?.stringValue = "\(selected + 1) / \(windows.count)"
         for window in visible {
+            cards[window.id]?.setClosable(window.canClose && !closingIDs.contains(window.id))
             cards[window.id]?.setSelected(window.id == selectedID)
             cards[window.id]?.setImage(image(window.id))
         }
@@ -258,6 +311,12 @@ final class SwitcherPanel {
         icons.removeAll()
     }
     #if UI_FIXTURE
+    func closeForFixture(_ id: String) -> Bool { cards[id]?.closeForFixture() ?? false }
+    func queueCloseForFixture(_ id: String) -> Bool {
+        guard let action = cards[id]?.onClose else { return false }
+        DispatchQueue.main.async { action(id) }
+        return true
+    }
     func chooseForFixture(_ id: String) -> Bool { cards[id]?.accessibilityPerformPress() ?? false }
     func snapshotPNG() -> Data? {
         guard let root, let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }
