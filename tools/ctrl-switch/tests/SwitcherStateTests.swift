@@ -54,74 +54,30 @@ enum SwitcherStateTests {
 
         keys.reset(); keys.isEnabled = true
         _ = keys.handle(.keyDown, key: 48, flags: .maskAlternate)
-        keys.pinAfterClose()
-        check(keys.isSelecting && keys.isPinned, "close retains a selectable pinned chooser")
-        check(keys.handle(.flagsChanged, key: 58, flags: []).action == nil && keys.isSelecting,
-              "Option release after close neither dismisses nor activates a window")
-        check(keys.handle(.keyUp, key: 48, flags: []).consume && keys.swallowedKeys.isEmpty,
-              "pinning still pairs the original held Tab release")
-        let pinnedTab = keys.handle(.keyDown, key: 48, flags: [], canNavigate: true)
-        check(pinnedTab.consume && pinnedTab.action == .cycle(reverse: false), "pinned chooser accepts Tab without Option")
-        check(keys.handle(.keyUp, key: 48, flags: []).consume, "pinned Tab release is paired")
-        check(keys.handle(.keyDown, key: 48, flags: .maskShift, canNavigate: true).action == .cycle(reverse: true),
-              "pinned chooser accepts Shift+Tab without Option")
-        _ = keys.handle(.keyUp, key: 48, flags: [])
-        for (key, direction) in SwitcherKeyState.arrows {
-            let result = keys.handle(.keyDown, key: key, flags: [], canNavigate: true)
-            check(result.consume && result.action == .navigate(direction), "pinned chooser accepts arrow \(key) without Option")
-            check(keys.handle(.keyUp, key: key, flags: []).consume, "pinned arrow \(key) release paired")
+        var closing = WindowSelection(ids: ["a", "b", "c"], currentID: "a", reverse: false)
+        closing.select("b"); closing.hover("b")
+        check(keys.isSelecting && closing.releaseTargetID == nil, "a close keeps the held session without arming a switch")
+        closing.retain(["a", "c"])
+        check(closing.ids == ["a", "c"] && closing.selectedID == "c", "closed card disappears and remaining identities stay stable")
+        check(closing.releaseTargetID == nil, "removing the hovered closed card cannot arm another window")
+        closing.select("c"); closing.hover("c"); closing.retain(["a"])
+        check(keys.isSelecting && closing.selectedID == "a", "a second close still uses the original held session")
+        let closeRelease = keys.handle(.flagsChanged, key: 58, flags: [])
+        check(closeRelease.action == .commit && !keys.isSelecting, "Option release ends the chooser after closing windows")
+        check(closing.releaseTargetID == nil, "close-only Option release dismisses without activating the remaining card")
+        check(keys.handle(.keyUp, key: 48, flags: []).consume && keys.swallowedKeys.isEmpty, "close-only release still pairs the original held Tab")
+        check(keys.handle(.keyDown, key: 48, flags: .maskAlternate).action == .begin(reverse: false), "next Alt+Tab starts immediately after close-only dismissal")
+        closing = WindowSelection(ids: ["a", "b", "c"], currentID: "a", reverse: false)
+        closing.select("b"); closing.hover("b"); closing.retain(["a", "c"])
+        let cycleAfterClose = keys.handle(.keyDown, key: 48, flags: .maskAlternate)
+        closing.cycle(reverse: false)
+        check(cycleAfterClose.action == .cycle(reverse: false) && closing.releaseTargetID == "a", "explicit keyboard selection after a close restores release-to-switch")
+        check(keys.handle(.flagsChanged, key: 58, flags: []).action == .commit, "keyboard selection after a close still confirms on Option release")
+        check(keys.handle(.keyUp, key: 48, flags: []).consume, "keyboard selection after a close keeps release pairing")
+        for code: CGKeyCode in [36, 76, 48, 123, 124, 125, 126] {
+            let ordinary = keys.handle(.keyDown, key: code, flags: [], canNavigate: true)
+            check(!ordinary.consume && ordinary.action == nil, "after dismissal ordinary navigation keys remain native")
         }
-        check(keys.handle(.flagsChanged, key: 58, flags: .maskAlternate).action == nil, "repressing Option does not finish pinned chooser")
-        check(keys.handle(.keyDown, key: 48, flags: .maskAlternate, canNavigate: true).action == .cycle(reverse: false),
-              "Alt+Tab continues the same pinned chooser")
-        _ = keys.handle(.keyUp, key: 48, flags: .maskAlternate)
-        _ = keys.handle(.flagsChanged, key: 58, flags: [])
-        let confirm = keys.handle(.keyDown, key: 36, flags: [], canNavigate: true)
-        check(confirm.consume && confirm.action == .confirm && !keys.isPinned && !keys.isSelecting,
-              "Return explicitly confirms the highlighted card even after a mouse close")
-        check(keys.handle(.keyUp, key: 36, flags: []).consume, "confirmation release paired")
-        check(!keys.handle(.keyDown, key: 36, flags: []).consume, "ordinary Return remains native")
-        keys.pinAfterClose()
-        let pinnedEscape = keys.handle(.keyDown, key: 53, flags: [], canNavigate: true)
-        check(pinnedEscape.consume && pinnedEscape.action == .cancel && !keys.isPinned, "Escape without Option exits pinned chooser")
-        check(keys.handle(.keyUp, key: 53, flags: []).consume, "pinned Escape release paired")
-        keys.pinAfterClose()
-        let pinnedOther = keys.handle(.keyDown, key: 0, flags: [], canNavigate: true)
-        check(!pinnedOther.consume && pinnedOther.action == .cancel && !keys.isPinned, "ordinary typing exits pinned chooser and passes through")
-        keys.pinAfterClose(); keys.cancel()
-        check(!keys.isSelecting && !keys.isPinned, "feature shutdown or final window removal clears pinned state")
-        check(keys.handle(.keyDown, key: 48, flags: .maskAlternate).action == .begin(reverse: false),
-              "dismissing a pinned chooser with Option already up does not block the next Alt+Tab")
-        keys.pinAfterClose(); keys.cancel()
-        check(keys.handle(.keyDown, key: 48, flags: .maskAlternate).action == nil,
-              "dismissing while Option is held still waits for the physical release")
-        check(keys.handle(.keyUp, key: 48, flags: .maskAlternate).consume, "pinned dismissal preserves held-key release pairing")
-        _ = keys.handle(.flagsChanged, key: 58, flags: [])
-        check(keys.handle(.keyDown, key: 48, flags: .maskAlternate).action == .begin(reverse: false),
-              "next session starts normally after a held Option is released")
-        keys.reset()
-        for (code, direction) in SwitcherKeyState.arrows {
-            keys.pinAfterClose()
-            let arrow = keys.handle(.keyDown, key: code, flags: [], canNavigate: true)
-            check(arrow.consume && arrow.action == .navigate(direction), "pinned arrow selects without Option")
-            check(keys.handle(.keyUp, key: code, flags: []).consume && keys.swallowedKeys.isEmpty,
-                  "pinned arrow release remains paired")
-        }
-        for code: CGKeyCode in [36, 76] {
-            keys.pinAfterClose()
-            let enter = keys.handle(.keyDown, key: code, flags: [], canNavigate: true)
-            check(enter.consume && enter.action == .confirm && !keys.isSelecting && !keys.isPinned,
-                  "Return explicitly confirms the pinned highlight")
-            check(keys.handle(.keyUp, key: code, flags: []).consume, "pinned Return release remains paired")
-        }
-        check(!keys.handle(.keyDown, key: 36, flags: [], canNavigate: true).consume,
-              "Return outside a pinned chooser retains its native behavior")
-        keys.pinAfterClose()
-        let controlTab = keys.handle(.keyDown, key: 48, flags: .maskControl, canNavigate: true)
-        check(!controlTab.consume && controlTab.action == .cancel, "pinned chooser preserves native Control+Tab")
-        keys.pinAfterClose()
-        let hiddenArrow = keys.handle(.keyDown, key: 124, flags: [], canNavigate: false)
-        check(!hiddenArrow.consume && hiddenArrow.action == .cancel, "hidden pinned panel cannot consume ordinary arrows")
         keys.reset()
 
         var selection = WindowSelection(ids: ["a", "b", "c"], currentID: "a", reverse: false)

@@ -36,14 +36,13 @@ final class WindowFocusGeneration {
 
 /// No system calls: the event tap only interprets keys, then schedules UI work.
 struct SwitcherKeyState {
-    enum Action: Equatable { case begin(reverse: Bool), cycle(reverse: Bool), navigate(SelectionDirection), commit, confirm, cancel }
+    enum Action: Equatable { case begin(reverse: Bool), cycle(reverse: Bool), navigate(SelectionDirection), commit, cancel }
     struct Result { var consume = false; var action: Action? }
     static let tab: CGKeyCode = 48
     static let escape: CGKeyCode = 53
     static let arrows: [CGKeyCode: SelectionDirection] = [123: .left, 124: .right, 125: .down, 126: .up]
     var isEnabled = false
     private(set) var isSelecting = false
-    private(set) var isPinned = false
     private(set) var swallowedKeys = Set<CGKeyCode>()
     private var waitForOptionRelease = false
     private var optionDown = false
@@ -59,10 +58,9 @@ struct SwitcherKeyState {
         if type == .flagsChanged {
             if !option {
                 waitForOptionRelease = false
-                if isSelecting, !isPinned { isSelecting = false; return Result(action: .commit) }
+                if isSelecting { isSelecting = false; return Result(action: .commit) }
             } else if extra, isSelecting {
                 isSelecting = false
-                isPinned = false
                 waitForOptionRelease = true
                 return Result(action: .cancel)
             }
@@ -71,12 +69,12 @@ struct SwitcherKeyState {
         guard type == .keyDown else { return Result() }
         // Arrow key events can carry function/numeric-pad flags. An actual Fn press is already
         // handled by flagsChanged; Control and Command combinations still retain native behavior.
-        if isEnabled, isSelecting, canNavigate, option || isPinned,
+        if isEnabled, isSelecting, canNavigate, option,
            flags.intersection([.maskControl, .maskCommand]).isEmpty, let direction = Self.arrows[key] {
             swallowedKeys.insert(key)
             return Result(consume: true, action: .navigate(direction))
         }
-        if key == Self.tab, option || isPinned, !extra, isEnabled, !waitForOptionRelease {
+        if key == Self.tab, option, !extra, isEnabled, !waitForOptionRelease {
             if isSelecting {
                 swallowedKeys.insert(key)
                 return Result(consume: true, action: .cycle(reverse: flags.contains(.maskShift)))
@@ -89,15 +87,8 @@ struct SwitcherKeyState {
         }
         // A consumed down must never leak repeats or an unmatched up to the foreground app.
         if swallowedKeys.contains(key) { return Result(consume: true) }
-        if isEnabled, isSelecting, isPinned, canNavigate, !extra, key == 36 || key == 76 {
-            swallowedKeys.insert(key)
-            isSelecting = false
-            isPinned = false
-            return Result(consume: true, action: .confirm)
-        }
         if isSelecting {
             isSelecting = false
-            isPinned = false
             waitForOptionRelease = option
             if key == Self.escape {
                 swallowedKeys.insert(key)
@@ -112,20 +103,10 @@ struct SwitcherKeyState {
         if !optionDown { waitForOptionRelease = false }
         else if isSelecting || !swallowedKeys.isEmpty { waitForOptionRelease = true }
         isSelecting = false
-        isPinned = false
-    }
-
-    /// Clicking a close control keeps the chooser open, including after Option is released.
-    /// Preserve swallowed downs so their matching ups cannot leak into the foreground app.
-    mutating func pinAfterClose() {
-        isSelecting = true
-        isPinned = true
-        waitForOptionRelease = false
     }
 
     mutating func reset() {
         isSelecting = false
-        isPinned = false
         swallowedKeys.removeAll()
         waitForOptionRelease = false
         optionDown = false

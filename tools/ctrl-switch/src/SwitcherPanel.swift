@@ -166,7 +166,7 @@ final class SwitcherPanel {
 
     func show(windows: [SwitchableWindow], selectedID: String?, previewStatus: WindowPreviewProvider.Status,
               pointerPreview: Bool = false,
-              keepOpen: Bool = false, closingIDs: Set<String> = [],
+              closingIDs: Set<String> = [],
               image: (String) -> CGImage?) {
         guard !windows.isEmpty else { hide(); return }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
@@ -235,10 +235,10 @@ final class SwitcherPanel {
                 }
                 card.onHover = { [weak self] id in self?.hovered(id) }
                 card.onClose = { [weak self] id in
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self, self.presentationGeneration == generation, self.isVisible else { return }
-                        self.onClose?(id)
-                    }
+                    // The close callback keeps the panel alive, so dispatch before a following
+                    // Option release can finish the session and discard this completed click.
+                    guard let self, self.presentationGeneration == generation, self.isVisible else { return }
+                    self.onClose?(id)
                 }
                 root.addSubview(card)
                 cards[window.id] = card
@@ -263,10 +263,8 @@ final class SwitcherPanel {
         switch previewStatus {
         case .needsPermission: hint = "右键菜单允许屏幕录制后可显示预览"
         case .paused: hint = "预览暂时暂停，窗口切换仍可使用"
-        default:
-            if keepOpen { hint = "单击 / 回车切换 · Esc 退出" }
-            else { hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
-                : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消" }
+        default: hint = pointerPreview ? "单击切换 · 松开 Alt 取消 · Esc 关闭"
+            : "方向键 / Tab 选择 · 松开 Alt 切换 · Esc 取消"
         }
         footer?.stringValue = hint
         countLabel?.stringValue = "\(selected + 1) / \(windows.count)"
@@ -314,6 +312,11 @@ final class SwitcherPanel {
     }
     #if UI_FIXTURE
     func closeForFixture(_ id: String) -> Bool { cards[id]?.closeForFixture() ?? false }
+    func queueCloseForFixture(_ id: String) -> Bool {
+        guard let action = cards[id]?.onClose else { return false }
+        DispatchQueue.main.async { action(id) }
+        return true
+    }
     func chooseForFixture(_ id: String) -> Bool { cards[id]?.accessibilityPerformPress() ?? false }
     func snapshotPNG() -> Data? {
         guard let root, let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }

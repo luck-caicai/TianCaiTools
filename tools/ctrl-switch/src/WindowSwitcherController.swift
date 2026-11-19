@@ -27,7 +27,6 @@ final class WindowSwitcherController {
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
     var isSelecting: Bool { selection != nil }
     var isPanelVisible: Bool { panel.isVisible }
-    var isPanelPinned: Bool { panel.isVisible && keys.isPinned }
     var panelSurfaceCount: Int { panel.visibleSurfaceCount }
 
     init(enabled: Bool, previewsEnabled: Bool) {
@@ -58,7 +57,6 @@ final class WindowSwitcherController {
                   let window = self.inventory.windows[id], window.canClose,
                   !self.pendingCloseIDs.contains(id) else { return }
             guard self.closeFixturePID == nil || self.closeFixturePID == window.pid else { return }
-            self.keys.pinAfterClose()
             self.selection?.select(id)
             self.selection?.hover(id)
             self.pendingCloseIDs.insert(id)
@@ -169,17 +167,15 @@ final class WindowSwitcherController {
             if selection?.selectedID != previous { arrowSelections += 1 }
             renderIfVisible()
         case .commit:
-            // A queued Option-release action can predate the close button's deferred callback.
-            guard !keys.isPinned else { return }
-            finish(target: selection?.releaseTargetID)
-        case .confirm:
-            finish(target: selection?.highlightedID)
+            // Releasing Option ends the chooser, but a requested native close may still
+            // produce a save sheet. Keep that close's bounded confirmation intent valid.
+            finish(target: selection?.releaseTargetID, cancelActivation: false)
         case .cancel:
             finish(target: nil)
         }
     }
 
-    private func finish(target: String?) {
+    private func finish(target: String?, cancelActivation: Bool = true) {
         let window = target.flatMap { inventory.windows[$0] }
         showWork?.cancel(); showWork = nil
         selection = nil
@@ -188,7 +184,7 @@ final class WindowSwitcherController {
         if let window {
             committedSwitches += 1
             inventory.activate(window)
-        } else { inventory.cancelPendingActivation() }
+        } else if cancelActivation { inventory.cancelPendingActivation() }
         onChanged?()
     }
 
@@ -211,7 +207,7 @@ final class WindowSwitcherController {
         let windows = selection.ids.compactMap { inventory.windows[$0] }
         panel.show(windows: windows, selectedID: selection.highlightedID, previewStatus: previews.status,
                    pointerPreview: selection.pointerPreviewActive,
-                   keepOpen: keys.isPinned, closingIDs: pendingCloseIDs,
+                   closingIDs: pendingCloseIDs,
                    image: { [unowned self] in self.previews.image(for: $0) })
         let visible = panel.visibleIDs.compactMap { inventory.windows[$0] }
         let selected = selection.highlightedID

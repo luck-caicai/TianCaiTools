@@ -50,7 +50,7 @@ import ApplicationServices
             panel.onClose = { id in
                 remainingWindows.removeAll { $0.id == id }
                 panel.show(windows: remainingWindows, selectedID: remainingWindows.first?.id, previewStatus: .ready,
-                    keepOpen: true, image: { _ in bitmap })
+                    pointerPreview: true, image: { _ in bitmap })
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     let report: [String: Any] = ["closed": id, "panelVisible": panel.isVisible,
                         "remaining": panel.visibleIDs, "surfaceCount": panel.visibleSurfaceCount]
@@ -70,7 +70,7 @@ import ApplicationServices
                 closed.append(id)
                 remainingWindows.removeAll { $0.id == id }
                 panel.show(windows: remainingWindows, selectedID: remainingWindows.first?.id, previewStatus: .ready,
-                    keepOpen: true, image: { _ in bitmap })
+                    pointerPreview: true, image: { _ in bitmap })
             }
             func finish() {
                 let passed = checks.values.allSatisfy { $0 }
@@ -101,12 +101,13 @@ import ApplicationServices
                         panel.show(windows: windows, selectedID: "fixture-0", previewStatus: .ready, image: { _ in bitmap })
                         checks["unavailableCloseDisabled"] = !panel.closeForFixture("fixture-5")
                         checks["disabledCloseCannotChoose"] = chosen == ["fixture-1"] && closed.isEmpty && panel.isVisible
-                        checks["oldCloseQueued"] = panel.closeForFixture("fixture-0")
+                        checks["oldCloseQueued"] = panel.queueCloseForFixture("fixture-0")
                         panel.hide()
                         panel.show(windows: windows, selectedID: "fixture-1", previewStatus: .ready, image: { _ in bitmap })
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             checks["oldCloseCannotAffectNewSession"] = closed.isEmpty && panel.isVisible
-                            checks["currentCloseQueued"] = panel.closeForFixture("fixture-2")
+                            checks["currentCloseDispatched"] = panel.closeForFixture("fixture-2")
+                            checks["closeDeliveredBeforeReturn"] = closed == ["fixture-2"]
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 checks["closeTargetsExactCard"] = closed == ["fixture-2"]
                                 checks["closeDoesNotChoose"] = chosen == ["fixture-1"]
@@ -118,12 +119,25 @@ import ApplicationServices
                                     checks["remainingCardsStillSelectable"] = panel.chooseForFixture("fixture-0")
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                         checks["chooseAfterCloseDismissesCleanly"] = chosen == ["fixture-1", "fixture-0"] && !panel.isVisible && panel.visibleSurfaceCount == 0
-                                        remainingWindows = windows.filter { $0.id == "fixture-4" }
-                                        panel.show(windows: remainingWindows, selectedID: "fixture-4", previewStatus: .ready, keepOpen: true, image: { _ in bitmap })
-                                        checks["lastCloseQueued"] = panel.closeForFixture("fixture-4")
+                                        var releaseKeys = SwitcherKeyState()
+                                        releaseKeys.isEnabled = true
+                                        _ = releaseKeys.handle(.keyDown, key: 48, flags: .maskAlternate)
+                                        panel.show(windows: remainingWindows, selectedID: "fixture-1", previewStatus: .ready, image: { _ in bitmap })
+                                        checks["releaseCloseDispatched"] = panel.closeForFixture("fixture-1")
+                                        checks["heldCloseKeepsPanelVisible"] = releaseKeys.isSelecting && panel.isVisible
+                                        let release = releaseKeys.handle(.flagsChanged, key: 58, flags: [])
+                                        checks["optionReleaseEndsCloseSession"] = release.action == .commit
+                                        if release.action == .commit { panel.hide() }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                            checks["lastCloseDismissesCleanly"] = closed.last == "fixture-4" && !panel.isVisible && panel.visibleSurfaceCount == 0
-                                            finish()
+                                            checks["optionReleaseDismissesCleanly"] = !panel.isVisible && panel.visibleSurfaceCount == 0
+                                            checks["closeSurvivesImmediateOptionRelease"] = closed.contains("fixture-1")
+                                            remainingWindows = windows.filter { $0.id == "fixture-4" }
+                                            panel.show(windows: remainingWindows, selectedID: "fixture-4", previewStatus: .ready, pointerPreview: true, image: { _ in bitmap })
+                                            checks["lastCloseDispatched"] = panel.closeForFixture("fixture-4")
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                                checks["lastCloseDismissesCleanly"] = closed.last == "fixture-4" && !panel.isVisible && panel.visibleSurfaceCount == 0
+                                                finish()
+                                            }
                                         }
                                     }
                                 }
