@@ -13,7 +13,8 @@ final class EventTapController {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObservers: [NSObjectProtocol] = []
     private var permissionTimer: Timer?
-    private var frontmostIsTerminal = false
+    private var frontmostBypassesCtrl = false
+    private(set) var remoteInputPassthrough = false
     private var sessionIsActive = true
     private var systemIsAwake = true
     private var screenIsLocked = false
@@ -22,6 +23,7 @@ final class EventTapController {
     var onAvailabilityChanged: ((Bool) -> Void)?
     var onKeyboardEvent: ((CGEventType, CGEvent) -> Bool)?
     var onInputInterrupted: (() -> Void)?
+    var onRemotePassthroughChanged: ((Bool) -> Void)?
     var hasPendingSwitcherReleases: (() -> Bool)?
     private(set) var isAvailable = false
     var switcherEnabled = false { didSet { reconcile() } }
@@ -161,7 +163,7 @@ final class EventTapController {
         if onKeyboardEvent?(type, event) == true { return nil }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         if let flags = transformer.transformedFlags(
-            type: type, keyCode: keyCode, flags: event.flags, bypass: frontmostIsTerminal
+            type: type, keyCode: keyCode, flags: event.flags, bypass: frontmostBypassesCtrl
         ) {
             event.flags = flags
         }
@@ -175,7 +177,11 @@ final class EventTapController {
 
     private func updateFrontmostApplication() {
         let identifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        frontmostIsTerminal = ShortcutTransformer.isTerminal(bundleIdentifier: identifier)
+        let remote = ShortcutTransformer.isRemoteControl(bundleIdentifier: identifier)
+        frontmostBypassesCtrl = remote || ShortcutTransformer.isTerminal(bundleIdentifier: identifier)
+        guard remote != remoteInputPassthrough else { return }
+        remoteInputPassthrough = remote
+        onRemotePassthroughChanged?(remote)
     }
 
     private func setStatus(_ newStatus: Status) {

@@ -8,8 +8,8 @@
     <key>CFBundleExecutable</key><string>CtrlSwitch</string>
     <key>CFBundleIdentifier</key><string>local.ctrlswitch.mac</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.1.2</string>
-    <key>CFBundleVersion</key><string>12</string>
+    <key>CFBundleShortVersionString</key><string>1.1.3</string>
+    <key>CFBundleVersion</key><string>13</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
