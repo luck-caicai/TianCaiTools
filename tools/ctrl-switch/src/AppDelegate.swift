@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.updateAppearance()
         }
         controller.onKeyboardEvent = { [weak self] type, event in self?.switcher.handle(type: type, event: event) ?? false }
+        controller.onRemotePassthroughChanged = { [weak self] bypassed in
+            self?.switcher.setInputBypassed(bypassed)
+            self?.updateAppearance()
+        }
+        switcher.setInputBypassed(controller.remoteInputPassthrough)
         controller.hasPendingSwitcherReleases = { [weak self] in self?.switcher.hasPendingReleases ?? false }
         controller.onInputInterrupted = { [weak self] in
             DispatchQueue.main.async { [weak self] in self?.switcher.cancel(resetKeys: true) }
@@ -195,23 +200,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateAppearance() {
         guard statusItem != nil, contextualMenu != nil else { return }
         let actualStatus = preview && controller.isEnabled ? EventTapController.Status.enabled : controller.status
-        let key = "\(actualStatus.rawValue)|\(controller.isEnabled)|\(controller.isAvailable)|\(switcher.isEnabled)|\(switcher.previewsEnabled)|\(switcher.previews.status.rawValue)|\(startupStatus.rawValue)"
+        let remotePassthrough = controller.remoteInputPassthrough
+        let key = "\(actualStatus.rawValue)|\(controller.isEnabled)|\(controller.isAvailable)|\(switcher.isEnabled)|\(switcher.previewsEnabled)|\(switcher.previews.status.rawValue)|\(startupStatus.rawValue)|\(remotePassthrough)"
         guard key != appearanceKey else { return }
         appearanceKey = key
         let isOn = actualStatus == .enabled
         let needsAttention = actualStatus == .needsPermission || actualStatus == .unavailable
         statusItem.button?.title = isOn ? "Win Ctrl" : "Mac Ctrl"
         statusItem.button?.image = switchImage(isOn: isOn, needsAttention: needsAttention)
-        statusItem.button?.setAccessibilityValue(isOn ? "已开启" : (needsAttention ? "需要辅助功能授权" : "已关闭"))
+        statusItem.button?.setAccessibilityValue(isOn ? (remotePassthrough ? "已开启，UU 远程按键直通" : "已开启") : (needsAttention ? "需要辅助功能授权" : "已关闭"))
         let description: String
-        switch actualStatus {
-        case .enabled: description = "已开启 · 点击恢复 Mac 原生快捷键"
-        case .disabled: description = "已关闭 · 点击启用 Ctrl 常用快捷键"
-        case .needsPermission: description = "等待辅助功能授权 · 点击查看"
-        case .unavailable: description = "键盘转换暂未就绪 · 点击重试"
-        case .suspended: description = "会话已暂停"
+        if remotePassthrough, controller.isAvailable {
+            description = "UU 远程按键直通 · 切回本地自动恢复"
+        } else {
+            switch actualStatus {
+            case .enabled: description = "已开启 · 点击恢复 Mac 原生快捷键"
+            case .disabled: description = "已关闭 · 点击启用 Ctrl 常用快捷键"
+            case .needsPermission: description = "等待辅助功能授权 · 点击查看"
+            case .unavailable: description = "键盘转换暂未就绪 · 点击重试"
+            case .suspended: description = "会话已暂停"
+            }
         }
-        statusItem.button?.toolTip = "Ctrl 开关：\(description)\n右键：登录时启动 / 退出\n终端应用保留原快捷键"
+        statusItem.button?.toolTip = "Ctrl 开关：\(description)\n右键：登录时启动 / 退出\n终端及 UU 远程保留原快捷键"
         statusMenuItem.title = description
         toggleMenuItem.state = controller.isEnabled ? .on : .off
         permissionMenuItem.isHidden = !needsAttention && (!switcher.isEnabled || controller.isAvailable)
@@ -348,6 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
             "accessibilityGranted": AXIsProcessTrusted(), "keyboardTapActive": controller.isAvailable,
             "ctrlEnabled": controller.isEnabled, "altTabEnabled": switcher.isEnabled,
+            "remoteInputPassthrough": controller.remoteInputPassthrough,
+            "switcherInputBypassed": switcher.isInputBypassed,
             "previewsEnabled": switcher.previewsEnabled, "previewStatus": switcher.previews.status.rawValue,
             "windowCount": switcher.inventory.windows.count,
             "fullscreenWindowCount": switcher.inventory.windows.values.filter(\.fullscreen).count,

@@ -24,6 +24,14 @@ struct ShortcutTransformer {
         terminalBundleIdentifiers.contains(bundleIdentifier)
     }
 
+    // Exact identifiers: a remote client's ordinary application UI uses the same policy
+    // as its sessions. Keep unrelated desktop apps and updater/helper bundles separate.
+    static let remoteControlBundleIdentifiers: Set<String> = ["com.netease.uuremote"]
+
+    static func isRemoteControl(bundleIdentifier: String) -> Bool {
+        remoteControlBundleIdentifiers.contains(bundleIdentifier)
+    }
+
     mutating func transformedFlags(
         type: CGEventType,
         keyCode: CGKeyCode,

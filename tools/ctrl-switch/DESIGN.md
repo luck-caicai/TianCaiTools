@@ -2,7 +2,7 @@
 
 ## 模块
 
-- `ShortcutTransformer` 保留原来的七组 Ctrl 转换和终端例外。
+- `ShortcutTransformer` 保留七组 Ctrl 转换、终端例外与远控应用识别。
 - `SwitcherState` 包含无系统副作用的按键状态、固定顺序选择、窗口 MRU、解码图片预算和截图准入规则。
 - `EventTapController` 为两项功能共用一个键盘事件入口，监听按下、松开和修饰键变化。只吞掉已匹配的 Tab/Esc 事件，不重映射 Ctrl、Command 或 Option。
 - `WindowInventory` 在串行后台队列进行 AX 查询，通过应用及窗口通知刷新；激活使用单独队列，避免等待窗口扫描。AX 调用有短超时与每个应用的扫描时间预算。
@@ -11,6 +11,14 @@
 - 鼠标高亮与键盘确认目标分离。悬停后松开 Alt 会取消并保留原焦点，只有单击才激活悬停窗口；使用方向键或 Tab 重新选择后恢复松开 Alt 确认。
 - `SwitcherPanel` 使用非激活 NSPanel、少量 AppKit 视图和 CALayer 展示卡片，取消时不改变前台焦点。
 - `WindowPreviewProvider` 负责单次截图、全局单请求、后台小位图复制、会话隔离与有上限的短期缓存。
+
+## 远程控制输入
+
+应用切换通知更新前台应用的 Ctrl 避让与远控直通状态。当前以精确 Bundle Identifier `com.netease.uuremote` 识别 UU 远程；不使用名称或 `desktop` 等宽泛子串，避免误伤浏览器、办公应用及独立更新程序。按键入口只使用缓存的布尔状态。
+
+UU 前台时，新的七组 Ctrl 组合保持原始 flags，Alt+Tab 也不再启动本地选择。进入 UU 会取消旧会话及延迟展示，排队的 begin 动作还会再次检查避让状态。已转换的 Ctrl 按下仍保留匹配的松开；此前接管的 Tab、方向键只继续消费配对的松开和重复事件，新的远控按键不被接管。切回本地后恢复正常处理，不改用户的两个功能开关。键盘中断重置仅清除按下状态，保留当前应用的直通策略。
+
+终端仅保留原来的 Ctrl 例外，仍可使用本地 Alt+Tab。只读状态增加 `remoteInputPassthrough` 与 `switcherInputBypassed` 两个布尔值，不包含远端设备、连接或输入内容。
 
 ## 截图与内存
 

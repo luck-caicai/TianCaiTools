@@ -27,6 +27,7 @@ final class WindowSwitcherController {
     var hasPendingReleases: Bool { !keys.swallowedKeys.isEmpty }
     var isSelecting: Bool { selection != nil }
     var isPanelVisible: Bool { panel.isVisible }
+    var isInputBypassed: Bool { keys.inputBypassed }
     var panelSurfaceCount: Int { panel.visibleSurfaceCount }
 
     init(enabled: Bool, previewsEnabled: Bool) {
@@ -115,6 +116,15 @@ final class WindowSwitcherController {
         onChanged?()
     }
 
+    func setInputBypassed(_ value: Bool) {
+        guard value != keys.inputBypassed else { return }
+        keys.setInputBypassed(value)
+        // A completed local choice may be activating UU right now. Only dismiss an
+        // unfinished chooser; do not cancel the activation that brought UU forward.
+        if value, selection != nil { finish(target: nil) }
+        onChanged?()
+    }
+
     /// Called synchronously by the shared tap: no AX, screenshot, panel layout, or permission calls.
     func handle(type: CGEventType, event: CGEvent) -> Bool {
         let result = keys.handle(type, key: CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)),
@@ -144,7 +154,7 @@ final class WindowSwitcherController {
     private func perform(_ action: SwitcherKeyState.Action) {
         switch action {
         case .begin(let reverse):
-            guard isEnabled, keyboardAvailable, !ordered.isEmpty else { keys.cancel(); return }
+            guard isEnabled, !keys.inputBypassed, keyboardAvailable, !ordered.isEmpty else { keys.cancel(); return }
             inventory.cancelPendingActivation()
             selection = WindowSelection(ids: ordered.map(\.id), currentID: inventory.focusedID, reverse: reverse)
             let work = DispatchWorkItem { [weak self] in

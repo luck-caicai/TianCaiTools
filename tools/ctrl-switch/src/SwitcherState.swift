@@ -42,6 +42,7 @@ struct SwitcherKeyState {
     static let escape: CGKeyCode = 53
     static let arrows: [CGKeyCode: SelectionDirection] = [123: .left, 124: .right, 125: .down, 126: .up]
     var isEnabled = false
+    private(set) var inputBypassed = false
     private(set) var isSelecting = false
     private(set) var swallowedKeys = Set<CGKeyCode>()
     private var waitForOptionRelease = false
@@ -69,12 +70,12 @@ struct SwitcherKeyState {
         guard type == .keyDown else { return Result() }
         // Arrow key events can carry function/numeric-pad flags. An actual Fn press is already
         // handled by flagsChanged; Control and Command combinations still retain native behavior.
-        if isEnabled, isSelecting, canNavigate, option,
+        if isEnabled, !inputBypassed, isSelecting, canNavigate, option,
            flags.intersection([.maskControl, .maskCommand]).isEmpty, let direction = Self.arrows[key] {
             swallowedKeys.insert(key)
             return Result(consume: true, action: .navigate(direction))
         }
-        if key == Self.tab, option, !extra, isEnabled, !waitForOptionRelease {
+        if key == Self.tab, option, !extra, isEnabled, !inputBypassed, !waitForOptionRelease {
             if isSelecting {
                 swallowedKeys.insert(key)
                 return Result(consume: true, action: .cycle(reverse: flags.contains(.maskShift)))
@@ -103,6 +104,13 @@ struct SwitcherKeyState {
         if !optionDown { waitForOptionRelease = false }
         else if isSelecting || !swallowedKeys.isEmpty { waitForOptionRelease = true }
         isSelecting = false
+    }
+
+    mutating func setInputBypassed(_ value: Bool) {
+        guard inputBypassed != value else { return }
+        inputBypassed = value
+        // Preserve swallowed downs: only their matching ups/repeats may still be consumed.
+        if value { cancel() }
     }
 
     mutating func reset() {
